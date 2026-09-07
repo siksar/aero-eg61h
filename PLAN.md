@@ -3,7 +3,8 @@
 > 7 Eylül 2026 · Gigabyte AERO X16 1VH (SKU EG61VH) · BIOS FB0A / EC F00A
 > Masaüstü: **COSMIC** (System76) · NixOS · çekirdek 7.2.2-cachyos-lto
 >
-> **Durum: adım 1 ve 2 yazıldı ve doğrulandı** (§10). Kalan adımlar hâlâ plan.
+> **Durum: adım 4'e kadar yazıldı ve doğrulandı** (§10) — sürücü artık fan modunu
+> ve şarj limitini yazabiliyor. `aorus_laptop`'a geçiş planı: `docs/nixos-gecis.md`.
 > Kararların tamamı §12'de; sürücü kararları (K1-K5) 7 Eyl'de kapandı.
 
 ---
@@ -361,16 +362,21 @@ Her adım tek başına çalışır ve tek başına doğrulanır.
 | # | adım | doğrulama | durum |
 |---|---|---|---|
 | 1 | **Çekirdek sürücüsü iskeleti** — üç `wmi_driver`, `WMBC`/`WMBD` sarmalayıcı | `/sys/bus/wmi/drivers/aero_eg61h` görünür | ✅ **7 Eyl 2026** |
-| 2 | **hwmon** — **1** sıcaklık + 2 fan, salt okunur (SKTC ölü çıktı) | yük altında CPU 45→91 °C, fanlar 0→3400 rpm | ✅ **7 Eyl 2026** |
-| 3 | **`charge_control_end_threshold`** + uyanış kancası | 60 yaz, uyku/uyanma, hâlâ 60 | sırada — **ilk yazma yolu** |
-| 4 | **Daemon** — D-Bus arayüzü + polkit, sürücüsüz `degraded` kipi dahil | `busctl` ile elle çağırma | |
-| 5 | **GUI iskeleti** — `nav_bar` + 7 panel, hepsi salt okunur | tema COSMIC ile uyumlu, gece/gündüz çalışıyor | |
-| 6 | **Basit menü** — 5 ön ayar + 1 kaydırıcı | ön ayara basınca `EIDR 0xF8AC`'de eğri gerçekten değişiyor | |
-| 7 | **Gelişmiş menü** — ayrık kontroller + onay diyalogları | `DIKKAT` ayarları parola istiyor, geri al çalışıyor | |
-| 8 | **EC İncelemesi paneli** | çıktı `ecpoke` ölçümüyle bayt-birebir | |
-| 9 | **NixOS paketleme** — flake + modül | **kullanıcı onayıyla** | |
+| 2 | **hwmon** — 1 sıcaklık + 2 fan, salt okunur (SKTC ölü çıktı) | yük altında CPU 45→91 °C, fanlar 0→3400 rpm | ✅ **7 Eyl 2026** |
+| 3 | **`charge_control_end_threshold`** + uyanış kancası | 60→80→45→60, hepsi geri okumayla eşleşti | ✅ **7 Eyl 2026** ¹ |
+| 4 | **Fan modu** — beş mod, özel sysfs (K1 = a′: `platform_profile`'a girmez) | turbo boşta fanları 0→7000 rpm'e çıkardı | ✅ **7 Eyl 2026** |
+| 5 | **`platform_profile`** — yalnız `0xED` | PPD + `power-display.nix` etkileşimi ölçülür | sırada |
+| 6 | **Daemon** — D-Bus arayüzü + polkit, sürücüsüz `degraded` kipi dahil | `busctl` ile elle çağırma | |
+| 7 | **GUI iskeleti** — `nav_bar` + 7 panel, hepsi salt okunur | tema COSMIC ile uyumlu, gece/gündüz çalışıyor | |
+| 8 | **Basit menü** — 5 ön ayar + 1 kaydırıcı | ön ayara basınca `fan_mode` gerçekten değişiyor | |
+| 9 | **Gelişmiş menü** — ayrık kontroller + onay diyalogları | `DIKKAT` ayarları parola istiyor, geri al çalışıyor | |
+| 10 | **EC İncelemesi paneli** | çıktı `ecpoke` ölçümüyle bayt-birebir | |
+| 11 | **NixOS geçişi** — `aorus_laptop` bırakılır | `docs/nixos-gecis.md` | **kullanıcı onayıyla** |
 
-Adım 5'e kadar sürücü şart değil (daemon `acpi_call` yoluna düşer), yani GUI
+¹ Yazma yolu doğrulandı; uyanış kancası gerçek bir suspend ile **henüz test
+edilmedi** (`kernel/README.md`).
+
+Adım 7'ye kadar sürücü şart değil (daemon `acpi_call` yoluna düşer), yani GUI
 paralel geliştirilebilir.
 
 ### Adım 1 — ne yapıldı (7 Eyl 2026)
@@ -413,6 +419,35 @@ takip ediyor; fanlar mod 4'ün eşiğinde gerçekten duruyor.
 
 ---
 
+### Adım 3 ve 4 — ne yapıldı (7 Eyl 2026)
+
+Sürücünün **ilk iki yazma yolu**. İkisi de aynı deseni kullanıyor:
+**yaz → geri oku → karşılaştır**. Sebebi ölçülmüş bir gerçek: `WMBD`'nin dönüş
+değeri hiçbir bilgi taşımıyor, tanınmayan seçici bile girdiyi yankılıyor. Tek
+doğrulama yolu karşılık gelen `WMBC` seçicisiyle geri okumak.
+
+**Adım 3 — `kernel/aero-battery.c`.** `power_supply` uzantısı, `BAT1` üzerine
+standart `charge_control_end_threshold`. Özel `charge_limit` düğümü yok.
+Uyanış kancası var (EC limiti uyanışta geri alıyor) ama **yalnız biz yazdıysak**
+devreye giriyor — kullanıcının dokunmadığı bir ayarı sürücü zorlamaz.
+Doğrulama: 60 → 80 → 45 → 60, üçü de geri okumayla eşleşti; 0/101/255 reddedildi.
+
+**Adım 4 — `kernel/aero-fan.c`.** Beş mod, özel sysfs
+(`/sys/bus/wmi/devices/ABBC0F75-…-2/fan_mode` + `fan_mode_choices`).
+`platform_profile`'a **girmiyor** — K1 = (a′) gereği ayrı kol.
+
+Uçtan uca kanıt turbo'dan geldi: boşta 37 °C'de fanlar 0 → 4615/4838 →
+**6976/7317 rpm**, `balanced`'a dönünce 9 s içinde 0. Yani sysfs yazımı →
+dört `WMBD` seçicisi → `PECM+0x2C = 0x0C` → EC eğri yükleme → fan → hwmon
+zincirinin tamamı çalışıyor.
+
+> **`aorus_laptop`'ın dördüncü ve en pahalı hatası burada ortaya çıktı.**
+> O sürücü `fan_mode = 1` için yalnız `0x57` (CRAF, bit0) yazıp kalan üç biti
+> temizlemiyor. `ADJF` (bit3) önceden kuruluysa sonuç `0x09` oluyor — yazdığı
+> mod değil. Makine tam olarak bu yüzden aylardır `~/nixos-zixar`'da
+> `fan_mode = 1` ("sessiz") yazılıyken **`balanced` (mod 4)** koşuyor.
+> Geçiş bu yüzden sayıları birebir çeviremez: `docs/nixos-gecis.md` §2.
+
 ## 11. İstek kuyruğu
 
 Kullanıcı uygulamayı denedikçe buraya yazılacak. Biçim: tarih · istek · durum.
@@ -452,7 +487,7 @@ Kullanıcı uygulamayı denedikçe buraya yazılacak. Biçim: tarih · istek · 
 | K1 | `platform_profile` | **(a′) yalnız `0xED` taşısın.** Handler SADECE performans profilini anahtarlar; seçim kümesi `amd-pmf`'inkini (`low-power balanced performance`) **kapsar**, böylece `/sys/firmware/acpi/platform_profile` kesişimi daralmaz ve `power-display.nix`'in pildeki `power-saver` otomatiği bozulmaz. **Fan modu ayrı bir koldur** — yoksa PPD'nin AC/BAT otomatiği her fiş takışında kullanıcının fan seçimini sessizce geri alırdı. |
 | K2 | MMIO | **B-ops.** Varsayılan MMIO yok; ham pencere ileride `raw_window=1` modül parametresiyle isteğe bağlı açılır ve o kipte de `request_mem_region` **çağrılmaz**, yani `ecscope`/`ecpoke`'un `/dev/mem` yolu her iki durumda da açık kalır. `CONFIG_IO_STRICT_DEVMEM=y` **ölçüldü** (7 Eyl) — risk teorik değil. 🚩 **BAYRAK:** kullanıcı bu kararı tam kavramadığını söyledi, öneri üzerinden gidildi. Hücre gerilimi paneli gündeme geldiğinde yeniden konuşulacak. |
 | K3 | Depo | **`~/aero-eg61h`** (ayrı depo; `~/nixos-zixar`'a habersiz dokunulmaz) |
-| K4 | `aorus_laptop` | Geliştirme boyunca elle `rmmod`. Sürücü artık bunu **kendi tespit ediyor** ve bağlanmayı reddediyor (`-EBUSY` + dmesg'de sebep). |
+| K4 | `aorus_laptop` | **(b) KALICI GEÇİŞ — kullanıcı 7 Eyl'de onayladı** ("bundan sonra aorus laptop wmi yerine sadece bunu kullanacagiz"). Özellik eşitliği adım 3+4 ile sağlandı. Uygulama planı `docs/nixos-gecis.md`; `~/nixos-zixar` değişikliği ayrı ve onaylı adım (§10 adım 11). Geliştirme sırasında sürücü çakışmayı kendi tespit edip `-EBUSY` ile reddediyor. |
 | K5 | Manuel fan duty izi | **(b) sonraya.** v1 zaten `pwm` sunmuyor; firmware'deki manuel duty yolunun host'tan erişilebilirliği bulunursa v2'de eklenir. |
 
 ---
@@ -535,3 +570,33 @@ de sabit sıfır. `pwm1`/`pwm2` (yazılıyor, fan umursamıyor) ve `fan_mode`
 
 **Yan bulgu 2:** mod 4'ün eğrisi doğrulandı — 91 °C'de fanlar yalnız ~3400/3700
 rpm'de kalıyor (tavan %43). Turbo'nun düz %63'ü ile arasındaki fark bu.
+
+### ✅ Ölçüm 5 — fan modu yazma zinciri — **YAPILDI 7 Eyl 2026**
+
+`PECM+0x2C` desenini dört `WMBD` seçicisiyle yazıp dört `WMBC` seçicisiyle geri
+okuma zinciri, beş modun beşinde de doğrulandı. Asıl kanıt turbo'dan geldi,
+çünkü tek gözle görülür (ve duyulur) olan o:
+
+| boşta 37 °C | başlangıç | +2 s | +4 s | `balanced`, +9 s |
+|---|---|---|---|---|
+| fan 1 | 0 rpm | 4615 | **6976** | 0 |
+| fan 2 | 0 rpm | 4838 | **7317** | 0 |
+
+Turbo'nun eğrisi düz %63, yani boşta bile dönmesi gerekiyordu — döndü.
+`quiet`/`responsive`/`gaming`/`balanced` boştayken fanları çalıştırmadı, bu da
+eğrilerinin başlangıç eşiklerine (54/40/40/54 °C) uygun.
+
+### ✅ Ölçüm 6 — `charge_mode` (BCPS) — **YAPILDI 7 Eyl 2026**
+
+`~/nixos-zixar`'ın `gigabyte-charge-limit.service`'i `charge_mode = 1` yazıyor
+ve dosyadaki yorum "charge_limit yalnız custom charge_mode'da çalışır" diyor.
+Sürücümüz `charge_mode` sunmuyor, o yüzden geçiş öncesi ölçüldü:
+
+| seçici | okunan | yorum |
+|---|---|---|
+| `WMBC 0x64` (BCPS) | **`0x04`** | `aorus`'un "1"'i EC'de **4** üretiyor — sayı eşlemesi yine birebir değil |
+| `WMBC 0x65` (BCPC) | `0x3c` = 60 | bizim sysfs'imizle birebir |
+| `WMBC 0xA2` | `0` | ölçüm anında **pilde** |
+
+**Sonuç:** boşluk tahminle değil `acpi_call` ile kapanıyor —
+`\_SB.PCI0.AMW0.WMBD 0 0x64 4`. Ayrıntı `docs/nixos-gecis.md` §3.

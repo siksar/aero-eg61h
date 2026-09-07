@@ -6,17 +6,23 @@
 
 `~/aero-eg61h/PLAN.md` dosyasını oku ve uygulamaya devam et.
 
-**Nerede kaldık (7 Eyl 2026):** sürücü kararlarının beşi de (K1-K5) kapandı,
-**adım 1 (WMI iskeleti) ve adım 2 (hwmon) yazılıp doğrulandı**.
-Sıradaki iş **adım 3: `charge_control_end_threshold` — sürücünün İLK YAZMA YOLU**.
+**Nerede kaldık (7 Eyl 2026):** kararlar kapandı, **adım 1-4 yazıldı ve
+doğrulandı** — WMI iskeleti, hwmon, şarj limiti, fan modu. Sürücü artık
+`~/nixos-zixar`'ın `aorus_laptop`'tan kullandığı **her şeyi** karşılıyor.
+Sıradaki iş **adım 5: `platform_profile`** (yalnız `0xED`, K1 = a′).
+
+**Kullanıcı kararı (7 Eyl): `aorus_laptop` kalıcı olarak bırakılacak.**
+Geçiş planı yazıldı ama UYGULANMADI: `docs/nixos-gecis.md` (beş dosya).
+`~/nixos-zixar` değişikliği ayrı ve onaylı adım.
 
 Bağlam belgeleri (gerektikçe aç):
 
 - `~/aero-eg61h/PLAN.md` — kapsam, katman mimarisi, panel yapısı, basit/gelişmiş
   ayrımı, tema kaynağı, yetki modeli, boşta güç kısıtı, uygulama sırası (§10),
   istek kuyruğu (§11), kararlar (§12)
-- `~/aero-eg61h/kernel/README.md` — **adım 1'in doğrulama çıktısı** ve çekirdek
+- `~/aero-eg61h/kernel/README.md` — **adım 1-4'ün doğrulama çıktıları** ve çekirdek
   API notu (bu çekirdekte `wmi_find_device_by_guid()` YOK)
+- `~/aero-eg61h/docs/nixos-gecis.md` — **aorus_laptop → aero_eg61h geçiş planı**
 - `~/ecscope/docs/surucu-tasarim.md` — sürücünün ABI kararı; §6 sıra, §7 kararlar
 - `~/ecscope/docs/firmware-8051.md` — EC firmware statik analizi + §11 canlı ölçümler
 - `~/ecscope/docs/yazma-ve-ic-uzay.md` — 6 Eyl yazma ölçümleri
@@ -38,26 +44,28 @@ Bağlam belgeleri (gerektikçe aç):
 - **Büyük ajan fan-out'u kullanma** — bu hesapta oturum limitine takılıp sıfır
   sonuç dönüyor (iki kez ölçüldü). Mekanik işi betiğe, yorumu tek bağlama bırak.
 
-## Sıradaki iş — adım 3 (`charge_control_end_threshold`)
+## Sıradaki iş — adım 5 (`platform_profile`)
 
-Sürücünün **ilk yazma yolu**. `power_supply_register_extension()` ile `BAT1`
-üzerine `POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD`:
-oku `WMBC 0x65`, yaz `WMBD 0x65` (BCPC, `selectors.tsv`'de **GUVENLI**).
+K1 = (a′): handler **yalnız** performans profilini (`WMBD 0xED` 0-3) anahtarlar.
+Fan modu pakete GİRMEZ — o zaten kendi sysfs'inde (adım 4).
 
-Üç şeye dikkat:
+Kritik kısıt: seçim kümesi `amd-pmf`'inkini (`low-power balanced performance`)
+**kapsamalı**. Kapsamazsa `/sys/firmware/acpi/platform_profile` seçenekleri
+kesişime düşer, `low-power` kaybolur ve `power-display.nix`'in pildeki
+`power-saver` otomatiği — dolayısıyla 4.28 W boşta bütçesi — bozulur.
 
-1. **EC uyanışta limiti geri alıyor** (6 Eyl ölçümü: sysfs değişim zamanı boot
-   anında kalmışken değer 100'e dönmüştü). `.resume` kancasında yeniden
-   uygulanmalı — bu adımın asıl işi bu, yazmanın kendisi kolay kısım.
-2. **`WMBD`'nin dönüş değeri hiçbir bilgi taşımıyor.** Yazımın tuttuğunu
-   görmenin tek yolu `WMBC 0x65` ile geri okumak.
-3. Özel `charge_limit` sysfs'i **sunulmayacak** — standart ABI var.
-   `charge_mode` (`WMBD 0x64`, BCPS) de yok: anlamı DSDT'den doğrulanamıyor.
+Doğrulama ÖLÇÜMLE: profiller arası geçiş + `powerprofilesctl` + fiş takıp
+çıkarma; `amd-pmf` ile çift yazımın yan etkisi gözlenmeli.
 
-`/sys/class/power_supply/BAT1/extensions/` **var ve boş** (ölçüldü) — yer hazır.
+### Paralel duran iki iş
 
-**Doğrulama:** 60 yaz, oku, uyku/uyanma, hâlâ 60.
-*Kullanıcı şu an limiti bilerek 100'de tutuyor* — teste başlamadan sor.
+1. **Uyanış kancası testi.** Sürücünün `.resume`'u gerçek bir suspend ile
+   denenmedi. Test: `echo 60 > /sys/class/power_supply/BAT1/charge_control_end_threshold`,
+   uyut, uyandır, `sudo dmesg | grep uyanis`. Satır yoksa yol
+   `register_pm_notifier(PM_POST_SUSPEND)` olacak.
+2. **NixOS geçişi.** `docs/nixos-gecis.md`. En kritik maddesi §2: `aorus`
+   `fan_mode` sayıları `PECM+0x2C` desenlerine eşlenmiyor, birebir çeviri
+   davranışı DEĞİŞTİRİR. AC/BAT varsayılanı `balanced` olmalı.
 
 ## Derleme ve yükleme
 

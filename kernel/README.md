@@ -4,26 +4,49 @@ Gigabyte AERO X16 1VH (SKU **EG61VH**, BIOS FB0A, EC F00A) için WMI platform
 sürücüsü. Tasarım kararları `~/ecscope/docs/surucu-tasarim.md`'de, ölçüm tabanı
 `~/ecscope/docs/{yazma-ve-ic-uzay,firmware-8051,aero-x16-catalogue}.md`'de.
 
-## Durum: adım 2 tamamlandı (7 Eyl 2026)
+## Durum: adım 4'e kadar tamam (7 Eyl 2026)
 
 | adım | ne | durum |
 |---|---|---|
 | 1 | İskelet: üç `wmi_driver`, `WMBC`/`WMBD` sarmalayıcıları | ✅ **doğrulandı** |
 | 2 | hwmon — salt okunur sıcaklık + fan | ✅ **doğrulandı** |
-| 3 | `charge_control_end_threshold` + uyanış kancası | sırada |
-| 4 | `platform_profile` (yalnız `0xED`, K1 = a′) | bekliyor |
-| 5 | Olay kanalı + `sparse_keymap` doldurma | kısmen (log var, tablo yok) |
-| 6 | debugfs: eğri okuyucu, `EIDR` (`ECTE` denetimiyle) | bekliyor |
+| 3 | `charge_control_end_threshold` (+ uyanış kancası) | ✅ **doğrulandı** ¹ |
+| 4 | Fan modu — beş mod, özel sysfs | ✅ **doğrulandı** |
+| 5 | `platform_profile` (yalnız `0xED`, K1 = a′) | sırada |
+| 6 | Olay kanalı + `sparse_keymap` doldurma | kısmen (log var, tablo yok) |
+| 7 | debugfs: eğri okuyucu, `EIDR` (`ECTE` denetimiyle) | bekliyor |
 
+¹ Yazma yolu doğrulandı; **uyanış kancası gerçek bir suspend ile HENÜZ test
+edilmedi** — ayrıntı aşağıda.
+
+### Sunulan arayüz
+
+```
+/sys/class/hwmon/hwmonN/                       (name = aero_eg61h)
+    temp1_input  temp1_label                   CPU sicakligi        SALT OKUNUR
+    fan1_input   fan1_label                    fan 0 devri          SALT OKUNUR
+    fan2_input   fan2_label                    fan 1 devri          SALT OKUNUR
+
+/sys/class/power_supply/BAT1/
+    charge_control_end_threshold               sarj limiti %        OKU + YAZ
+
+/sys/bus/wmi/devices/ABBC0F75-8EA1-11D1-00A0-C90629100000-2/
+    fan_mode                                   bes mod              OKU + YAZ
+    fan_mode_choices                           quiet balanced responsive gaming turbo
+```
+
+Hepsi bu. Ölçülmemiş hiçbir şey yok.
 
 ### Dosyalar
 
 ```
-aero-eg61h.h   ortak tanimlar: WMI GUID'leri, secici sabitleri, struct aero_ec
-aero-main.c    WMI baglanma, WMBC/WMBD sarmalayicilari, DMI + cakisma kapilari
-aero-hwmon.c   hwmon katmani — TAMAMI SALT OKUNUR
-Makefile       aero-eg61h-y := aero-main.o aero-hwmon.o
-build.sh       arac zincirini ~/nixos-zixar flake'inden ceker
+aero-eg61h.h    ortak tanimlar: WMI GUID'leri, secici sabitleri, struct aero_ec
+aero-main.c     WMI baglanma, WMBC/WMBD sarmalayicilari, DMI + cakisma kapilari
+aero-hwmon.c    hwmon — TAMAMI SALT OKUNUR
+aero-battery.c  sarj limiti — standart power_supply ABI'si + uyanis kancasi
+aero-fan.c      fan modu — bes desen, dort secicilik yazma dizisi
+Makefile        aero-eg61h-y := aero-main.o aero-hwmon.o aero-battery.o aero-fan.o
+build.sh        arac zincirini ~/nixos-zixar flake'inden ceker
 ```
 
 ## Derleme
@@ -130,11 +153,81 @@ tahmin**. Firmware fanları yalnız "fan 0" / "fan 1" diye adlandırıyor
 `RPM2`'den başka bir isim yok. Hangi fanın neyi soğuttuğu ölçülene kadar
 etiketler dürüst kalıyor.
 
+## Adım 3 doğrulama koşusu — şarj limiti (7 Eyl 2026)
+
+```
+aero_eg61h: sarj limiti hazir: BAT1/charge_control_end_threshold = 60%
+```
+
+`/sys/class/power_supply/BAT1/extensions/` altında `aero_eg61h` göründü
+(uzantı kaydı çalışıyor). Yazma testi, **gerçek değişikliklerle**:
+
+| yazılan | geri okunan | hüküm |
+|---|---|---|
+| 80 | 80 | ✅ |
+| 45 | 45 | ✅ |
+| 60 (geri alma) | 60 | ✅ |
+| 0 | — | reddedildi (`-EINVAL`) |
+| 101 | — | reddedildi |
+| 255 | — | reddedildi |
+
+Yazımlar sırasında dmesg **sessiz** — yani "yaz + geri oku + karşılaştır"
+denetimi hiç uyuşmazlık görmedi. Değer başladığı yerde (%60) bırakıldı.
+
+> **AÇIK: uyanış kancası test edilmedi.** `.resume` geri çağrısı yazıldı ama
+> gerçek bir suspend/resume ile denenmedi. PM çekirdeği sürücünün `pm` ops'unu
+> yalnız bus kendi bir geri çağrı sunmadığında çağırıyor; WMI bus'ın pm ops'u
+> bu çekirdekte incelenemedi (dev çıktısında `drivers/` yok).
+> **Test:** limiti yaz → uyut → uyandır → `sudo dmesg | grep uyanis`.
+> Satır yoksa yol `register_pm_notifier(PM_POST_SUSPEND)` olacak — o bus'tan
+> bağımsız çalışır.
+
+## Adım 4 doğrulama koşusu — fan modu (7 Eyl 2026)
+
+```
+fan_mode         = balanced
+fan_mode_choices = quiet balanced responsive gaming turbo
+```
+
+Beş modun beşi de yazıldı ve **dört seçiciyle geri okunarak** doğrulandı.
+`bogus`, `5`, boş dize reddedildi.
+
+**Uçtan uca kanıt — turbo.** Turbo'nun eğrisi düz %63, yani boşta bile fanları
+döndürmesi gerekiyor. Boşta 37 °C'de:
+
+| | başlangıç | +2 s | +4 s | `balanced`'a dönüş, +9 s |
+|---|---|---|---|---|
+| fan 1 | 0 rpm | 4615 | **6976** | 0 |
+| fan 2 | 0 rpm | 4838 | **7317** | 0 |
+
+Zincirin tamamı çalışıyor: sysfs yazımı → dört `WMBD` seçicisi →
+`PECM+0x2C = 0x0C` → EC turbo eğrisini yüklüyor → fanlar dönüyor →
+kendi hwmon'umuz okuyor. Makine `balanced`'da bırakıldı.
+
+### Neden dört seçici ve neden bu sırayla
+
+`PECM+0x2C` bağımsız bir bit alanı değil, **desen eşleştirici**: 16
+kombinasyonun yalnız beşi tanınıyor, kalan on biri varsayılana düşüyor.
+Deseni yazan tek bir seçici yok — dört ayrı `WMBD` seçicisi dört ayrı biti
+yazıyor, ve ara durumlar geçici olarak başka bir moda düşürüyor. Bu yüzden
+dizinin tamamı tek kilit altında, ve **önce temizlenecek bitler** yazılıyor:
+eksik bitli ara desenler varsayılana (mod 0 — 40 °C'de başlar) düşüyor, yani
+ara durum her zaman *daha soğuk* bir moda denk geliyor.
+
+> **`aorus_laptop`'ın dördüncü hatası, ve en pahalısı.** O sürücü
+> `fan_mode = 1` için yalnız `0x57` (CRAF, bit0) yazıp kalan üç biti
+> temizlemiyor. `ADJF` (bit3) önceden kuruluysa sonuç `0x09` oluyor — yazdığı
+> mod değil. Makine tam olarak bu yüzden aylardır `fan_mode = 1` yazılıyken
+> `balanced` (mod 4) koşuyor. Geçiş planı bunu hesaba katıyor:
+> `~/aero-eg61h/docs/nixos-gecis.md` §2.
+
 ## Şu ana kadar bilerek YOK olanlar
 
-- **Hiçbir yazma yolu** — `WMBD` sarmalayıcısı var ama hiç çağrılmıyor.
-  İlk yazma adım 3'te (`charge_control_end_threshold`) gelecek.
-- `platform_profile` girişi — adım 4 (K1 = a′: yalnız `0xED`)
+- `platform_profile` girişi — adım 5 (K1 = a′: yalnız `0xED`)
+- `charge_mode` (`WMBD 0x64`, BCPS) — anlamı DSDT'den doğrulanamıyor, standart
+  karşılığı yok. Geçiş için `acpi_call` ile kapanıyor (`docs/nixos-gecis.md` §3)
+- Fan hızı/duty kaydırıcısı — bu firmware'de fan hızı ayarlanamıyor, yalnız
+  hangi eğrinin yükleneceği seçilebiliyor
 - Yazılabilir `pwm*` — duty yazmaçları inert (üç bağımsız kanıt)
 - Salt okunur `pwm*` bile yok — `FDTY`/`GDTY` gerçek duty'yi göstermiyor
 - `temp2` — `SKTC` ölü kanal, yük altında da 0 (yukarı bak)
