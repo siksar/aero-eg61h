@@ -1,0 +1,19 @@
+# derleme ciktilari
+*.ko
+*.o
+*.o.*
+*.mod
+*.mod.c
+*.cmd
+.*.cmd
+*.symvers
+*.order
+.tmp_versions/
+Module.symvers
+modules.order
+
+# nix GC kokleri (cekirdek dev ciktisi, make) — makineye ozel, versiyonlanmaz
+.gcroots/
+
+# rust
+target/

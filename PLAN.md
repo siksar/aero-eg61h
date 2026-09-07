@@ -1,0 +1,467 @@
+# `aero-eg61h` — plan
+
+> 7 Eylül 2026 · Gigabyte AERO X16 1VH (SKU EG61VH) · BIOS FB0A / EC F00A
+> Masaüstü: **COSMIC** (System76) · NixOS · çekirdek 7.2.2-cachyos-lto
+>
+> **Durum: adım 1 yazıldı ve doğrulandı** (§10). Kalan adımlar hâlâ plan.
+> Kararların tamamı §12'de; sürücü kararları (K1-K5) 7 Eyl'de kapandı.
+
+---
+
+## 0. Kullanıcının istediği (kendi sözleriyle)
+
+> "bunları kullanabileceğimiz bir kontrol servisi hazırlamalıyız. uygulamanın sol
+> kısmında paneller, basılan panele göre de içeren ayarları yapabildiğimiz kısım
+> olması lazım. uygulamanın basit ve gelişmiş menüsü olmalı; basit menüde tavsiye
+> edilen ayarlar ile oynanılabilirken gelişmiş menüde metrikleri kullanıcı kendisi
+> ayarlayabilecek şekilde olmalı. GUI teması olarak da kişinin kendi tema
+> renklerine sahiplenen bir mod, gündüz ve gece modları olmalı. modern dizaynda
+> olmalı."
+
+Ek: "onun dışında bir isteğim olursa uygulamayı her deneyimimde söylerim."
+→ §11'de bir **istek kuyruğu** var; her yeni istek oraya tarihiyle yazılacak.
+
+---
+
+## 1. Neyi kontrol edeceğiz — yer gerçeği
+
+Tam envanter `~/ecscope/docs/surucu-tasarim.md` ve `firmware-8051.md`'de.
+Uygulamanın **sunabileceği** her şey aşağıdaki listeyle sınırlı; bunun dışında
+bir düğme koymak yalan olur.
+
+### Gerçekten kontrol edebildiklerimiz (ölçüldü)
+
+| ne | kaynak | değer aralığı |
+|---|---|---|
+| Fan modu | `WMBD 0x57/0x71/0x67/0x6A` → `PECM+0x2C` | **5 mod**: sessiz(`0x01`) · gaming(`0x02`) · turbo(`0x0C`) · mod0(`0x00`) · **mod4(`0x09`)** |
+| Performans profili | `WMBD 0xED` | 0-3 (CPU PL1/2/3 + dGPU bütçesi tek pakette) |
+| Şarj limiti | `WMBD 0x65` | 0-100 % — **uyanışta EC geri alıyor, yeniden uygulanmalı** |
+| dGPU Dynamic Boost | `WMBD 0x4C` (ACBT), `0x4A` (AMAT), `0xE7` (aç/kapa) | 0-10 / 15-25 / 0-1 |
+| CPU termal setpoint | `\DPTT(0x03, N)` (AMD SMU, WMI değil) | °C |
+
+Eğriler **güç kaynağına göre değişmiyor** (7 Eyl ölçümü, `firmware-8051.md` §11.2)
+— AC ve pilde aynı tablolar yükleniyor.
+
+### Sadece okuyabildiklerimiz
+
+CPU/soket sıcaklığı, iki fanın RPM'i, AC/pil durumu, kapak, dGPU GC6 kapısı,
+**hücre başına pil gerilimi** (Linux'ta bu makinede hiç yok), aktif fan eğrisi
+tabloları (yavaş, mailbox üzerinden).
+
+### Asla sunulmayacak
+
+- **Yazılabilir fan hızı/duty** — yazmaçlar ölü (üç bağımsız kanıt).
+  `aorus_laptop` bunu sunuyor ve yalan söylüyor; tekrarlamayacağız.
+- **Fan eğrisi düzenleyici** — eğri tablosunun veri portu salt-okunur.
+- **Klavye aydınlatma LED sınıfı** — `KBLL` (`WMBD 0xF6`) ölü yazmaç: yazılıyor,
+  tutuyor, görsel etkisi yok (7 Eyl ölçümü, aydınlatma açıkken). Aydınlatma
+  HID LampArray ile sürülüyor; o ayrı bir iş.
+- CMOS'a yazan seçiciler (`0x63 0x87 0x88 0xA3 0xE6`) — kalıcı, geri dönüşü yok.
+- `0x51` (dGPU eject), `0xC9` (`FNKS`), `0x4B`, `0xF1/F2/F3` — sistemi düşürebilir
+  ya da EC geri yazıyor.
+
+> **Kural:** Gelişmiş menü bile `~/ecscope/lib/selectors.tsv`'deki `YASAK`
+> sınıfını **hiç göstermez**. `DIKKAT` sınıfı gösterilir ama onay diyaloğu ister.
+
+---
+
+## 2. Katman mimarisi
+
+Dört katman. Her biri ayrı ayrı test edilebilir ve alttakinin yokluğunda
+üsttekinin ne yapacağı tanımlı.
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ 4. aero-control      GUI (libcosmic) — YETKİSİZ         │
+│                      kullanıcı olarak koşar             │
+└───────────────────────────┬─────────────────────────────┘
+                            │ D-Bus (system bus) + polkit
+┌───────────────────────────┴─────────────────────────────┐
+│ 3. aero-eg61hd       daemon — root, D-Bus etkinleştirmeli│
+│                      boşta çıkar, poll YOK              │
+└───────────────────────────┬─────────────────────────────┘
+                            │ sysfs / hwmon / power_supply
+┌───────────────────────────┴─────────────────────────────┐
+│ 2. aero_eg61h.ko     çekirdek sürücüsü (wmi_driver)     │
+│                      standart ABI'ler                    │
+└───────────────────────────┬─────────────────────────────┘
+                            │ ACPI WMBD/WMBC + paylaşımlı pencere
+┌───────────────────────────┴─────────────────────────────┐
+│ 1. EC firmware       ENE 8051 — bizim değil             │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Neden daemon var?** GUI root olarak koşmayacak. Yazma işlemleri polkit ile
+yetkilendirilecek — `power-profiles-daemon`/`fwupd` ile aynı desen.
+Ayrıca şarj limitinin uyanışta yeniden uygulanması gibi **GUI kapalıyken de
+gereken** işler var.
+
+**Sürücü yoksa ne olur?** Daemon, sürücü yüklü değilse `acpi_call` üzerinden
+ham WMI yoluna düşer (`degraded` kipi) ve GUI bunu üstte bir uyarı şeridiyle
+gösterir. Böylece uygulama sürücüden **önce** geliştirilebilir ve test edilebilir.
+
+---
+
+## 3. Teknoloji seçimi
+
+### GUI: **Rust + `libcosmic`** — önerilen
+
+Gerekçe (hepsi kullanıcının isteğine doğrudan cevap veriyor):
+
+| istek | `libcosmic` karşılığı |
+|---|---|
+| "sol kısımda paneller, basılan panele göre ayarlar" | `cosmic::app::Core` + **`nav_bar`** — COSMIC Settings'in kendisi böyle yapılmış; hazır bileşen |
+| "kişinin kendi tema renklerine sahiplenen mod" | `cosmic-theme` kütüphanesi `~/.config/cosmic/com.system76.CosmicTheme.*`'i **canlı** okur; vurgu rengi, yoğunluk, font, ikon teması bedava gelir |
+| "gündüz ve gece modları" | `com.system76.CosmicTheme.Mode/v1/is_dark` + `auto_switch` — kütüphane otomatik izler |
+| "modern dizayn" | COSMIC'in kendi tasarım dili; sistemle birebir tutarlı |
+
+Ölçülen ortam (7 Eyl): `is_dark = true`, `auto_switch = false`,
+`interface_density = Spacious`, font `JetBrainsMono Nerd Font`, ikon teması `macOS`.
+`libcosmic` bunların hepsini kendiliğinden uygular.
+
+**Ek kazanç:** Electron/Chromium yok. `~/nixos-zixar/CLAUDE.md`'deki 4.28 W boşta
+güç bütçesi ve "ikinci bir Chromium yığını taşıma" dersi (deezer-enhanced'ın
+kaldırılma sebebi) bunu zorunlu kılıyor.
+
+**Risk:** `libcosmic` nixpkgs'te ayrı bir paket değil, Cargo git bağımlılığı
+olarak tüketiliyor. NixOS'ta paketlemek `rustPlatform.buildRustPackage` +
+`cargoLock.outputHashes` gerektirir — COSMIC'in kendi nixpkgs türevleri bunu
+zaten yapıyor, desen kopyalanabilir.
+
+**Alternatifler (reddedildi ama kayda geçsin):**
+- *GTK4 + libadwaita*: iyi ama COSMIC teması GTK'ya tam yansımıyor; ayrı bir
+  tasarım dili olur.
+- *Qt6/QML*: Caelestia yığınına uyardı — ama kullanıcı artık COSMIC'te.
+- *Tauri/Electron*: modern tasarım kolaylığı var, **boşta güç bütçesini bozar.**
+
+### Daemon: **Rust** (`zbus` ile D-Bus)
+
+GUI ile aynı dil, aynı veri tipleri, tek `cargo workspace`.
+
+### Çekirdek sürücüsü: **C** (`wmi_driver`), ayrı alt dizin
+
+---
+
+## 4. Panel yapısı (sol nav)
+
+Her panel yalnız **gerçekten sunabildiğimiz** şeyleri içerir.
+
+| # | panel | içerik |
+|---|---|---|
+| 1 | **Durum** | Canlı özet: CPU/soket sıcaklığı, iki fan RPM, güç kaynağı, aktif profil, pil %/sağlık. Salt okunur pano. |
+| 2 | **Fan ve Termal** | Fan modu seçimi (**5 mod** — mod 4 dahil, aşağı bak). Canlı sıcaklık + RPM. *Gelişmiş:* termal setpoint (`DPTT 0x03`). |
+| 2b | **Fan Eğrisi** | Seçili modun eğrisini **sıcaklık fonksiyonu olarak** çizen grafik paneli — ayrıntı §4.1 |
+| 3 | **Güç ve Performans** | Performans profili (`0xED` 0-3). *Gelişmiş:* dGPU Dynamic Boost bütçesi, AMAT, boost aç/kapa. |
+| 4 | **Pil** | Şarj limiti kaydırıcısı. Hücre başına gerilim (4 hücre). Döngü sayısı, sağlık. Uyanışta yeniden uygulama anahtarı. |
+| 5 | **EC İncelemesi** *(yalnız Gelişmiş)* | Paylaşımlı pencere görüntüleyici, EC iç uzayı okuyucu, ham `WMBC` seçici okuma. **Salt okunur.** |
+| 6 | **Ayarlar** | Basit/Gelişmiş anahtarı, tema kipi, açılışta başlat, telemetri örnekleme aralığı. |
+
+> **"Klavye ve Işıklar" paneli v1'de YOK.** 7 Eyl 2026'da ölçüldü: `KBLL`
+> (`WMBD 0xF6`) yazılıyor, tutuyor, geri okunuyor — ama klavyede **hiçbir
+> görsel etkisi yok** (aydınlatma açıkken, 0↔4 arası üç kez gidiş-geliş).
+> `FDTY`/`FAN1` ile aynı ölü-yazmaç sınıfı. Aydınlatmayı süren yol HID
+> LampArray ve o zaten çalışıyor. Klavye özelleştirmesi **ayrı ve sonraki bir
+> iş** — LampArray protokolü üzerinden, bu depoda değil.
+
+Panel 6, `~/ecscope`'un yaptığı işi GUI'ye taşır — ama **yalnız okuma**.
+Yazma hep `ecpoke`'ta kalır (o ayrımı bozmayacağız).
+
+### 4.1 "Fan Eğrisi" paneli — `duty = f(sıcaklık)`
+
+*(7 Eyl 2026 · kullanıcı isteği)*
+
+Seçili fan modunun eğrisini **sıcaklığın fonksiyonu olarak** çizer. Bu, uygulamanın
+en bilgi verici ekranı olacak: fan modunun ne demek olduğunu sayı listesiyle değil
+**şekliyle** anlatır.
+
+**Veri.** 14 nokta × `(t1, t2, duty)`. Tabloların hepsi firmware'den çıkarıldı
+(24 tablo, `~/ecscope/docs/firmware-8051.md` §4), yani uygulama **hiçbir donanıma
+dokunmadan** her modun eğrisini anında çizebilir. Seçim kuralı da biliniyor
+(`0x0616E`'deki 8 baytlık kural tablosu), yani "bu modda hangi tablo yüklenir"
+sorusu çevrimdışı cevaplanıyor.
+
+| eksen | ne |
+|---|---|
+| X | sıcaklık (°C) — otomatik aralık, tipik 30-100 |
+| Y | duty (%) — 0-100, ama gerçek tavan moda göre 29/43/53/63 |
+
+**Çizim biçimi: basamak (step), eğri değil.** Sebep dürüstlük: `t1`/`t2`'nin
+ara değerlerde interpolasyon mu yoksa eşik mi olduğu **henüz ölçülmedi**
+(`firmware-8051.md` §9, açık iş 6). Basamak çizmek en az iddia eden gösterimdir.
+Ölçüm sonucu interpolasyon çıkarsa çizim yumuşatılır — o zamana kadar
+grafiğin altında tek satır: *"eşikler ölçüldü, ara davranış ölçülmedi"*.
+
+**İki eğri, üst üste.** Fan 0 ve fan 1 farklı tablolar kullanıyor (ölçüldü);
+ikisi ayrı renkte, efsanede `Fan 1` / `Fan 2`.
+
+**Canlı katman.** Grafiğin üstüne:
+- o anki CPU sıcaklığını gösteren **dikey imleç**
+- o anki iki fanın RPM'i (grafiğin dışında, sayı olarak)
+- imlecin eğriyi kestiği noktada beklenen duty
+
+**Karşılaştırma kipi.** Bir anahtar: "yalnız seçili mod" ↔ "beş modu birden".
+İkincisi, mod seçiminin ne değiştirdiğini tek bakışta gösterir — mod 4'ün neden
+ilginç olduğu (sessiz gibi geç başlar, varsayılan gibi yükselir) ancak böyle
+görülüyor.
+
+**"EC'den doğrula" düğmesi.** Grafik varsayılan olarak firmware kaynak
+tablosundan çizilir (anında, yan etkisiz). Düğmeye basılınca aktif eğri
+`EIDR` ile EC'den okunur (~1.5 s, 108 bayt) ve kaynak tabloyla karşılaştırılır:
+*"EC'deki eğri kaynak tablo 0x05CBE ile birebir aynı ✓"*. Bu, uygulamanın
+kullanıcıya **kanıt** sunduğu yer — ve `aorus_laptop`'ın yalan söylediği
+durumu (sysfs `1` derken EC'de mod 4 koşması) yakalayan mekanizma.
+
+*Gelişmiş kipte ek olarak:* ham tablo (14 satır × 3 sütun), kaynak ofseti,
+kural tablosundaki eşleşen kayıt (`b0`/`b2`/`mod` alanlarıyla).
+
+**Düzenleme YOK.** Eğri salt okunurdur (veri portu salt-okunur, ölçüldü).
+Panelde "kaydet" düğmesi olmayacak; bunun yerine grafiğin köşesinde kalıcı bir
+not: *"Bu firmware'de eğriler değiştirilemez; mod seçimi hangi eğrinin
+yükleneceğini belirler."*
+
+---
+
+## 5. Basit / Gelişmiş ayrımı
+
+Tek bir anahtar (Ayarlar'da ve pencere üst çubuğunda). Panel listesi ve her
+panelin içeriği buna göre değişir.
+
+### Basit menü — "tavsiye edilen ayarlarla oynanır"
+
+Ham sayı yok, **isimlendirilmiş hazır kombinasyonlar** var. Her biri fan modu +
+performans profilini **tutarlı bir paket** olarak kurar (Gigabyte Control
+Center'ın yaptığı gibi):
+
+| ön ayar | `PECM+0x2C` | eğri | `0xED` | ne zaman |
+|---|---|---|---|---|
+| **Sessiz** | `0x01` | 54 °C'de başlar, tavan %29 | 0 | okuma/yazma, pil ömrü |
+| **Dengeli** | `0x09` → **mod 4** | 54 °C'de başlar, tavan %43 | 1 | günlük — *varsayılan* |
+| **Duyarlı** | `0x00` → mod 0 | 40 °C'de başlar, tavan %43 | 1 | erken soğutma isteyen |
+| **Performans** | `0x02` gaming | 40 °C'de başlar, tavan %53 | 2 | oyun/derleme |
+| **Maksimum** | `0x0C` turbo | 36 °C'de başlar, düz %63 | 3 | kısa süreli tam yük |
+
+> **Mod 4, 7 Eyl 2026'da canlı ölçümle keşfedildi** ve makine o sırada zaten
+> onda koşuyordu (`0x2C = 0x09`), ama `aorus_laptop` `fan_mode = 1` diyordu.
+> Eğrisi "sessiz gibi geç başla, varsayılan gibi yükselebil" — günlük kullanım
+> için en dengeli seçenek, ve **hiçbir Linux aracı bunu sunmuyor.**
+> Bu yüzden "Dengeli" ön ayarı mod 0'ı değil mod 4'ü kullanıyor.
+
+Artı bir kaydırıcı: **şarj limiti** (tavsiye 60/80/100 işaretli).
+
+Basit menüde toplam 6 kontrol var (5 ön ayar + 1 kaydırıcı). Amacı: bir şeyi
+bozamamak.
+
+### Gelişmiş menü — "metrikleri kullanıcı kendisi ayarlar"
+
+- Fan modu ve performans profili **ayrı ayrı** (paket bozulabilir)
+- dGPU Dynamic Boost bütçesi (ham 0-10 ve karşılığı watt)
+- CPU termal setpoint (`DPTT 0x03`, °C)
+- Şarj limiti serbest sayı girişi
+- Aktif eğrinin ham tablosu + hangi kaynak tablodan geldiği
+- EC İncelemesi paneli açılır
+- Her `DIKKAT` sınıfı kontrol için **onay diyaloğu** ("bu ayar EC tarafından geri
+  alınabilir / yan etkisi ölçülmedi") ve **geri al** düğmesi
+
+> **Değişmez kural:** Gelişmiş menü, olmayan bir yeteneği sunmaz. Fan hızı
+> kaydırıcısı **yok**, çünkü fan hızı ayarlanamıyor. Bunun yerine o alanda
+> tek satırlık bir açıklama durur: *"Bu firmware'de fan hızı doğrudan
+> ayarlanamıyor; yalnız hangi eğrinin kullanılacağı seçilebiliyor."*
+
+---
+
+## 6. Tema
+
+**Kaynak: COSMIC'in kendi yapılandırması.** Uygulama kendi renk paleti taşımaz.
+
+```
+~/.config/cosmic/com.system76.CosmicTheme.Mode/v1/is_dark      → gece/gündüz
+~/.config/cosmic/com.system76.CosmicTheme.Mode/v1/auto_switch  → otomatik geçiş
+~/.config/cosmic/com.system76.CosmicTheme.Dark/v1/…            → koyu palet
+~/.config/cosmic/com.system76.CosmicTheme.Light/v1/…           → açık palet
+~/.config/cosmic/com.system76.CosmicTk/v1/…                    → yoğunluk, font, ikon
+```
+
+`libcosmic` bunları zaten okuyor ve **canlı izliyor** — kullanıcı COSMIC
+Ayarlar'dan vurgu rengini değiştirdiğinde uygulama anında uyar. Bizim yazacağımız
+kod: hiç.
+
+Ayarlar panelinde üç seçenek: **Sistemi izle** (varsayılan) · **Açık** · **Koyu**.
+"Sistemi izle" `auto_switch`'i de onurlandırır.
+
+> **YASAK:** `~/.config/cosmic` altına **hiçbir şey yazılmayacak.**
+> `~/nixos-zixar/CLAUDE.md`'nin kuralı: cosmic-config'in kullanıcı katmanı
+> sistem katmanını yener ve oraya bir store sembolik bağı koymak Ayarlar
+> arayüzünün **sessizce** kaydetmemesine yol açıyor. Biz oradan sadece **okuruz**.
+
+---
+
+## 7. Yetki modeli
+
+| eylem | kim | nasıl |
+|---|---|---|
+| Sensör okuma | GUI doğrudan | `hwmon`/`power_supply` sysfs — zaten herkese açık |
+| Fan modu / profil değiştirme | daemon | polkit `org.aero.eg61h.set-profile` — `active` oturum için `yes` |
+| Şarj limiti | daemon | polkit `…set-charge-limit` |
+| Gelişmiş / `DIKKAT` ayarları | daemon | polkit `…advanced` — **her seferinde parola** (`auth_admin`) |
+| EC ham okuma | daemon | polkit `…read-ec` — `active` için `yes` (okuma zararsız) |
+| EC yazma | **hiç yok** | GUI'de yazma yolu bulunmayacak; ölçüm hep `ecpoke`'ta |
+
+---
+
+## 8. Boşta güç kısıtı — bu depoda pazarlık konusu değil
+
+`~/nixos-zixar/CLAUDE.md`: *"pil/idle tabanı 4.28 W GERİLEMEZ"*, ve
+*"`system/` ya da `home/` altına eklenen hiçbir şey boştayken koşmamalı ya da
+yoklama yapmamalı."*
+
+Bunun uygulamaya yansıması:
+
+1. **Daemon D-Bus ile etkinleştirilir** (`BusName=`, `Type=dbus`), iş bitince
+   `IdleTimeout` ile **çıkar**. Boot'ta başlamaz.
+2. **Hiçbir yoklama yok.** Sensörler yalnız GUI açıkken ve yalnız görünür panel
+   için okunur. GUI kapanınca örnekleme durur.
+3. AC/pil değişimi **udev olayıyla** yakalanır, zamanlayıcıyla değil — güç
+   katmanının mevcut deseni budur.
+4. Şarj limitinin uyanışta yeniden uygulanması `systemd` `sleep` kancasıyla
+   yapılır, sürekli koşan bir servisle değil.
+5. Örnekleme aralığı Ayarlar'da (varsayılan 2 sn, en hızlı 1 sn); "Durum"
+   paneli dışındaki paneller açıkken örnekleme yavaşlar.
+
+**Kabul ölçütü:** uygulama kurulduktan sonra, GUI kapalıyken
+`nix store diff-closures` ve boşta güç ölçümü **değişmemeli**.
+
+---
+
+## 9. Depo düzeni
+
+```
+~/aero-eg61h/
+├── PLAN.md                 ← bu dosya
+├── README.md
+├── kernel/                 aero_eg61h.ko  (C)
+│   └── …
+├── daemon/                 aero-eg61hd    (Rust, zbus)
+├── gui/                    aero-control   (Rust, libcosmic)
+├── dbus/                   .conf + .service + polkit .rules
+├── nix/                    flake + NixOS modülü  ← ayrı ve KULLANICI ONAYLI adım
+└── docs/
+```
+
+**`~/nixos-zixar`'a hiçbir şey eklenmeyecek** — entegrasyon ayrı bir adım ve
+kullanıcının kararı (`PROMPT.md` kuralı).
+
+---
+
+## 10. Uygulama sırası
+
+Her adım tek başına çalışır ve tek başına doğrulanır.
+
+| # | adım | doğrulama | durum |
+|---|---|---|---|
+| 1 | **Çekirdek sürücüsü iskeleti** — üç `wmi_driver`, `WMBC`/`WMBD` sarmalayıcı | `/sys/bus/wmi/drivers/aero_eg61h` görünür | ✅ **7 Eyl 2026** |
+| 2 | **hwmon** — 2 sıcaklık + 2 fan, salt okunur | `sensors` değerleri `aorus_laptop`'ınkiyle aynı | sırada |
+| 3 | **`charge_control_end_threshold`** + uyanış kancası | 60 yaz, uyku/uyanma, hâlâ 60 | |
+| 4 | **Daemon** — D-Bus arayüzü + polkit, sürücüsüz `degraded` kipi dahil | `busctl` ile elle çağırma | |
+| 5 | **GUI iskeleti** — `nav_bar` + 7 panel, hepsi salt okunur | tema COSMIC ile uyumlu, gece/gündüz çalışıyor | |
+| 6 | **Basit menü** — 5 ön ayar + 1 kaydırıcı | ön ayara basınca `EIDR 0xF8AC`'de eğri gerçekten değişiyor | |
+| 7 | **Gelişmiş menü** — ayrık kontroller + onay diyalogları | `DIKKAT` ayarları parola istiyor, geri al çalışıyor | |
+| 8 | **EC İncelemesi paneli** | çıktı `ecpoke` ölçümüyle bayt-birebir | |
+| 9 | **NixOS paketleme** — flake + modül | **kullanıcı onayıyla** | |
+
+Adım 5'e kadar sürücü şart değil (daemon `acpi_call` yoluna düşer), yani GUI
+paralel geliştirilebilir.
+
+### Adım 1 — ne yapıldı (7 Eyl 2026)
+
+`kernel/` altında `aero_eg61h.ko`: üç `wmi_driver` (`ABBC0F75` yazma,
+`ABBC0F6F` okuma, `ABBC0F72` olay), `WMBC`/`WMBD` sarmalayıcıları, DMI kapısı,
+`aorus_laptop` çakışma kapısı. **Hiçbir sysfs düğümü ve hiçbir yazma yolu yok.**
+Ayrıntı ve doğrulama çıktısı: `kernel/README.md`.
+
+Koşu iki şeyi kanıtladı: okuma yolu çalışıyor (CPU 37 °C, `aorus_laptop`'ın
+38 °C'siyle uyumlu) ve **fan modu `0x09` = mod 4** okunuyorken `aorus_laptop`
+aynı anda `fan_mode = 1` diyordu — yanlış bildirim canlı olarak ikinci kez
+yakalandı.
+
+> **Tasarım belgesinden bir sapma var.** `surucu-tasarim.md` §3.1 kardeş WMI
+> cihazını `wmi_find_device_by_guid()` ile bulmayı öneriyordu; **o API bu
+> çekirdekte (7.2.2) yok** — ne başlıkta bildiriliyor ne `Module.symvers`'te
+> dışa aktarılıyor. Yerine üç ayrı sürücü + modül genelinde paylaşılan durum
+> kullanıldı. Gerekçe `kernel/README.md`'nin son bölümünde.
+
+---
+## 11. İstek kuyruğu
+
+Kullanıcı uygulamayı denedikçe buraya yazılacak. Biçim: tarih · istek · durum.
+
+| tarih | istek | durum |
+|---|---|---|
+| 2026-09-07 | Sol panel + panele göre içerik | planda (§4) |
+| 2026-09-07 | Basit / Gelişmiş menü ayrımı | planda (§5) |
+| 2026-09-07 | Kullanıcının kendi tema renklerini devralma + gündüz/gece | planda (§6) |
+| 2026-09-07 | Modern tasarım | planda (§3 — libcosmic) |
+| 2026-09-07 | Seçilen fan modunu **sıcaklık fonksiyonu** olarak çizen eğri paneli | planda (§4.1) |
+| 2026-09-07 | Klavye özelleştirme | **ertelendi** — `KBLL` ölü çıktı; LampArray yolu ayrı iş |
+
+---
+
+## 12. Kararlar
+
+> **İsim çakışması uyarısı.** Bu dosyanın `D` kararları **uygulamaya** ait;
+> `~/ecscope/docs/surucu-tasarim.md` §7'nin `K` kararları **sürücüye** ait.
+> İkisi ayrı numaralandırma. `BASLA.md` 7 Eyl'de "D1 (platform_profile) /
+> D2 (MMIO)" diye yazmıştı — kastedilen K1 ve K2'ydi; ikisi de aşağıda kapalı.
+
+### Uygulama kararları
+
+| # | soru | karar |
+|---|---|---|
+| D1 | GUI araç seti: `libcosmic` mi? | **Evet** — COSMIC'te olduğunuz sürece en iyi uyum. COSMIC'ten vazgeçilirse uygulama yine çalışır, sadece tema varsayılana düşer. |
+| D2 | Uygulama adı | `aero-control` (ikili), görünen ad **"AERO Kontrol"** |
+| D3 | Daemon mu, yoksa GUI doğrudan polkit/pkexec mi? | **Daemon** — uyanış kancası ve GUI'siz işler için gerekli |
+| D4 | `aorus_laptop` ne olacak? | Geliştirme boyunca elle `rmmod`; kalıcı blacklist sürücü olgunlaşınca ve **sizin onayınızla** |
+| D5 | Klavye ışığı panele girsin mi? | **KAPANDI — HAYIR.** 7 Eyl ölçümü: `KBLL` görsel etkisi yok, ölü yazmaç. `led_classdev` sunulmayacak, panel v1'de yok. Klavye özelleştirmesi LampArray ile, ayrı iş. |
+
+### Sürücü kararları (`surucu-tasarim.md` §7) — 7 Eyl 2026'da kapandı
+
+| # | soru | karar |
+|---|---|---|
+| K1 | `platform_profile` | **(a′) yalnız `0xED` taşısın.** Handler SADECE performans profilini anahtarlar; seçim kümesi `amd-pmf`'inkini (`low-power balanced performance`) **kapsar**, böylece `/sys/firmware/acpi/platform_profile` kesişimi daralmaz ve `power-display.nix`'in pildeki `power-saver` otomatiği bozulmaz. **Fan modu ayrı bir koldur** — yoksa PPD'nin AC/BAT otomatiği her fiş takışında kullanıcının fan seçimini sessizce geri alırdı. |
+| K2 | MMIO | **B-ops.** Varsayılan MMIO yok; ham pencere ileride `raw_window=1` modül parametresiyle isteğe bağlı açılır ve o kipte de `request_mem_region` **çağrılmaz**, yani `ecscope`/`ecpoke`'un `/dev/mem` yolu her iki durumda da açık kalır. `CONFIG_IO_STRICT_DEVMEM=y` **ölçüldü** (7 Eyl) — risk teorik değil. 🚩 **BAYRAK:** kullanıcı bu kararı tam kavramadığını söyledi, öneri üzerinden gidildi. Hücre gerilimi paneli gündeme geldiğinde yeniden konuşulacak. |
+| K3 | Depo | **`~/aero-eg61h`** (ayrı depo; `~/nixos-zixar`'a habersiz dokunulmaz) |
+| K4 | `aorus_laptop` | Geliştirme boyunca elle `rmmod`. Sürücü artık bunu **kendi tespit ediyor** ve bağlanmayı reddediyor (`-EBUSY` + dmesg'de sebep). |
+| K5 | Manuel fan duty izi | **(b) sonraya.** v1 zaten `pwm` sunmuyor; firmware'deki manuel duty yolunun host'tan erişilebilirliği bulunursa v2'de eklenir. |
+
+---
+## 13. Ölçümler
+
+### ✅ Ölçüm 1 — AC/DC eğri ayrımı — **YAPILDI 7 Eyl 2026, hipotez ÇÜRÜDÜ**
+
+Kural tablosundaki `b0` alanının (`0x00`/`0x10`/`0x30`/`0x40`) güç kaynağı
+ayrımı olduğu sanılıyordu. **Değil.**
+
+Yöntem: önce pilde, sonra fişte fan kayıt dizisi (`0xF8A4`, 108 bayt) okundu.
+İlk karşılaştırma sonuçsuz kaldı — **EC eğrileri yalnız mod değişiminde yeniden
+yüklüyor**, AC/DC geçişi tetiklemiyor. Bu yüzden AC'deyken mod geçici olarak
+`0x01`'e (sessiz) alınıp yeniden yükleme zorlandı, sonra geri yüklendi
+(`fw/fanmode-probe.sh`, `trap` ile garantili geri yükleme, doğrulandı).
+
+Sonuç: AC'de sessiz mod `0x05A66`/`0x05AB1` yüklüyor — **pildekiyle birebir aynı.**
+
+**Sürücü/uygulama sonucu:** eğriler güç kaynağına göre değişmiyor.
+"Fan Eğrisi" paneli tek bir eğri seti gösterecek, AC/DC ayrımı olmayacak.
+`b0 = 0x30`/`0x40` tablolarının ne olduğu **açık soru** olarak kalıyor.
+
+**Yan bulgu (daha değerli):** ölçüm sırasında makinenin **mod 4**'te koştuğu
+ortaya çıktı (`PECM+0x2C = 0x09`) — `aorus_laptop` ise `fan_mode = 1` diyordu.
+Mod 4 daha önce "erişilemez" sanılıyordu. §5'e işlendi.
+
+**Yan bulgu 2:** hücre başına pil gerilimi kanalı canlı doğrulandı
+(3829/3844/3848/3850 mV, toplam `voltage_now`'u %0.3 içinde takip ediyor).
+
+### ⏳ Ölçüm 2 — klavye ışığı görsel testi — **BEKLİYOR**
+
+`sudo ~/ecscope/fw/kbll-test.sh` hazır. **Önkoşul: Fn+Space ile aydınlatmayı
+AÇIN** — kapalıyken yapılan test sonuçsuzdur (29 Tem 2026'da öyle olmuştu).
+Betik 0-4 seviyelerini 4'er saniye gezer, sonra eski değeri geri yükler.
+Karar D5 ve "Klavye ve Işıklar" panelinin varlığı buna bağlı.
