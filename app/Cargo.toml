@@ -1,0 +1,16 @@
+[workspace]
+resolver = "3"
+members = [
+    "aero-sysfs",   # veri katmani — salt okunur, std-only, sifir bagimlilik
+    "aero-ctl",     # CLI: durum dokumu (tanilama + aero-sysfs'in kosturulabilir testi)
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "GPL-2.0-only"
+repository = "https://github.com/zixar/aero-eg61h"
+
+[profile.release]
+lto = true
+strip = true

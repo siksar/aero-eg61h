@@ -1,0 +1,11 @@
+[package]
+name = "aero-sysfs"
+description = "aero_eg61h sürücüsünün sysfs yüzeyini okur — her düğüm opsiyonel"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# BAGIMLILIK YOK, ve bu bilincli. Bu katman yalnız dosya okuyor; glob/serde/anyhow
+# getirmek closure'i buyutur ve 4.28 W bosta guc butcesinin ruhuna aykiri.
+[dependencies]

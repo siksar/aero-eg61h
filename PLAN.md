@@ -341,14 +341,24 @@ Bunun uygulamaya yansıması:
 ~/aero-eg61h/
 ├── PLAN.md                 ← bu dosya
 ├── README.md
-├── kernel/                 aero_eg61h.ko  (C)
-│   └── …
-├── daemon/                 aero-eg61hd    (Rust, zbus)
-├── gui/                    aero-control   (Rust, libcosmic)
-├── dbus/                   .conf + .service + polkit .rules
-├── nix/                    flake + NixOS modülü  ← ayrı ve KULLANICI ONAYLI adım
+├── kernel/                 aero_eg61h.ko  (C) — üç wmi_driver, beş katman
+├── app/                    cargo workspace
+│   ├── aero-sysfs/         veri katmanı — salt okunur, std-only, YETKİSİZ
+│   ├── aero-ctl/           durum dökümü (tanılama + aero-sysfs'in testi)
+│   └── aero-control/       GUI (libcosmic)
+├── nix/                    NixOS modülü + hazır geçiş yaması
+├── scripts/                doğrulama betikleri
 └── docs/
 ```
+
+> **§9 8 Eyl 2026'da güncellendi.** Eski düzen `daemon/` + `gui/` + `dbus/`
+> ayırıyordu. `daemon/` ve `dbus/` HENÜZ YOK ve olmayabilir: daemon'un iki
+> gerekçesinden biri (GUI kapalıyken şarj limitini uyanışta yeniden uygulamak)
+> sürücünün kendi `.resume` kancasına taşındı ve orada doğrulandı. Geriye yalnız
+> yetki aracılığı kaldı; onun için D-Bus daemon'u tek seçenek değil — `nix/`
+> modülünün zaten kullandığı polkit + `systemctl start` deseni daha hafif ve
+> §7'nin eylem-başına yetki tablosuna daha doğrudan oturuyor. Karar adım 6'da,
+> ilk yazma yolu GUI'ye geldiğinde verilecek.
 
 **`~/nixos-zixar`'a hiçbir şey eklenmeyecek** — entegrasyon ayrı bir adım ve
 kullanıcının kararı (`PROMPT.md` kuralı).
