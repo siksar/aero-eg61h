@@ -214,12 +214,37 @@ dizinin tamamı tek kilit altında, ve **önce temizlenecek bitler** yazılıyor
 eksik bitli ara desenler varsayılana (mod 0 — 40 °C'de başlar) düşüyor, yani
 ara durum her zaman *daha soğuk* bir moda denk geliyor.
 
-> **`aorus_laptop`'ın dördüncü hatası, ve en pahalısı.** O sürücü
-> `fan_mode = 1` için yalnız `0x57` (CRAF, bit0) yazıp kalan üç biti
-> temizlemiyor. `ADJF` (bit3) önceden kuruluysa sonuç `0x09` oluyor — yazdığı
-> mod değil. Makine tam olarak bu yüzden aylardır `fan_mode = 1` yazılıyken
-> `balanced` (mod 4) koşuyor. Geçiş planı bunu hesaba katıyor:
-> `~/aero-eg61h/docs/nixos-gecis.md` §2.
+> **`aorus_laptop` yanlış mod bildiriyor — MEKANİZMA ÖLÇÜLDÜ (7 Eyl 2026).**
+> Deney: `aorus_laptop` yüklüyken `fan_mode`'a 1/2/5/4 yazıldı, her yazımdan
+> önce ve sonra `PECM+0x2C`'nin dört biti `WMBC 0x57/0x71/0x67/0x6A` ile okundu.
+>
+> | yazılan | `0x2C` öncesi → sonrası | ne yaptı |
+> |---|---|---|
+> | `1` | `0x09` → `0x09` | b0 kurdu, **b3'e dokunmadı** |
+> | `2` | `0x09` → `0x0a` | b1 kurdu, b0'ı temizledi, b3'e dokunmadı |
+> | `5` | `0x0a` → `0x0c` | b2 kurdu, b1'i temizledi, b3'e dokunmadı |
+> | `4` | `0x0c` → `0x04` | **b3'ü temizledi**, b2'yi bıraktı |
+>
+> Yani b0/b1/b2'yi birbirini dışlayan bir grup olarak yönetiyor ama **b3'ü
+> (`ADJF`) desenin parçası saymıyor**; `fan_mode = 4` bir mod değil, "ADJF'yi
+> kapat" işlemi. Ortaya çıkan desen ADJF'nin o anki durumuna bağlı:
+>
+> | yazılan | ADJF=1 iken | ADJF=0 iken |
+> |---|---|---|
+> | `1` "sessiz" | `0x09` = mod4 ✗ | `0x01` = quiet ✓ |
+> | `2` "gaming" | `0x0a` = **tanınmıyor → varsayılan** ✗ | `0x02` = gaming ✓ |
+> | `5` "turbo" | `0x0c` = turbo ✓ | `0x04` = **tanınmıyor → varsayılan** ✗ |
+> | `4` "dengeli" | `0x04` = **varsayılan** ✗ | `0x04` = **varsayılan** ✗ |
+>
+> **Dördünün de doğru çalıştığı bir ADJF durumu yok.** Süper+M döngüsü
+> (`4→1→2→5`) ilk adımda ADJF'yi sıfırladığı için ondan sonra hem döngünün
+> "Turbo"su hem `game-perf.service`'in `fan_mode = 5`'i `0x04` — yani
+> **varsayılan** — veriyor: oyun turbosu sessizce çalışmıyor.
+>
+> *(Önceki hükmümüz "yalnız `0x57` yazıp kalan üç biti temizlemiyor" idi —
+> bu bir çıkarımdı ve mekanizma kısmı YANLIŞTI. Ölçüm düzeltti.)*
+> `fan_mode = 1` yazılıyken `balanced` (mod 4) koşuyor.
+> Plan: `~/aero-eg61h/docs/nixos-gecis.md` §2.
 
 ## Şu ana kadar bilerek YOK olanlar
 

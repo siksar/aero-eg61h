@@ -441,12 +441,17 @@ Uçtan uca kanıt turbo'dan geldi: boşta 37 °C'de fanlar 0 → 4615/4838 →
 dört `WMBD` seçicisi → `PECM+0x2C = 0x0C` → EC eğri yükleme → fan → hwmon
 zincirinin tamamı çalışıyor.
 
-> **`aorus_laptop`'ın dördüncü ve en pahalı hatası burada ortaya çıktı.**
-> O sürücü `fan_mode = 1` için yalnız `0x57` (CRAF, bit0) yazıp kalan üç biti
-> temizlemiyor. `ADJF` (bit3) önceden kuruluysa sonuç `0x09` oluyor — yazdığı
-> mod değil. Makine tam olarak bu yüzden aylardır `~/nixos-zixar`'da
-> `fan_mode = 1` ("sessiz") yazılıyken **`balanced` (mod 4)** koşuyor.
-> Geçiş bu yüzden sayıları birebir çeviremez: `docs/nixos-gecis.md` §2.
+> **`aorus_laptop` yanlış mod bildiriyor — MEKANİZMA ÖLÇÜLDÜ (7 Eyl 2026).**
+> O sürücü `PECM+0x2C`'nin b0/b1/b2'sini birbirini dışlayan bir grup olarak
+> yönetiyor ama **b3'ü (`ADJF`) desenin parçası saymıyor**. Sonuç ADJF'nin o
+> anki durumuna bağlı ve dördünün de doğru çalıştığı bir durum yok:
+> `fan_mode = 1` ADJF=1 iken `0x09` (mod4) veriyor — makinenin aylardır
+> "sessiz" yazılıyken `balanced` koşmasının sebebi bu. Daha kötüsü: Süper+M
+> döngüsü ADJF'yi sıfırlıyor, ondan sonra `game-perf`'in `fan_mode = 5`'i
+> turbo değil **varsayılan** veriyor. Tam tablo ve deney:
+> `~/aero-eg61h/docs/nixos-gecis.md` §2.
+> ("sessiz") yazılıyken **`balanced` (mod 4)** koşuyor, o yüzden geçiş
+> sayıları birebir çeviremez: `docs/nixos-gecis.md` §2.
 
 ## 11. İstek kuyruğu
 

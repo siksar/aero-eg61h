@@ -28,25 +28,55 @@ bozulsalar bile sistem çalışır (tanılama betikleri).
 
 ## 2. ⚠️ EN ÖNEMLİ NOKTA: sayıları BİREBİR ÇEVİRMEYİN
 
-`aorus_laptop`'ın `fan_mode` numaraları `PECM+0x2C` desenlerine **güvenilir
-biçimde eşlenmiyor**. Kanıt: `wmi.nix` AC ve pil için `fan_mode = 1` ("sessiz")
-yazıyor, ama makine **`0x2C = 0x09` yani `balanced` (mod 4)** modunda koşuyor —
-7 Eyl'de iki bağımsız ölçümle doğrulandı.
+`aorus_laptop`'ın `fan_mode` numaraları `PECM+0x2C` desenlerine eşlenmiyor.
+**Mekanizma 7 Eyl 2026'da ölçüldü** (önceki hüküm bir çıkarımdı ve mekanizma
+kısmı yanlıştı).
 
-Sebebi anlaşıldı: `aorus_laptop` `fan_mode = 1` için yalnız `0x57` (CRAF, bit0)
-yazıyor ve **kalan üç biti temizlemiyor**. `ADJF` (bit3) önceden kurulmuşsa
-sonuç `0x09` oluyor — yani yazdığı mod değil, başka bir mod. Bizim sürücümüz
-deseni tam yazıp geri okuduğu için bu hata tekrarlanamıyor.
+**Deney.** `aorus_laptop` yüklüyken `fan_mode`'a 1/2/5/4 yazıldı; her yazımdan
+önce ve sonra `0x2C`'nin dört biti `WMBC 0x57/0x71/0x67/0x6A` ile okundu.
 
-**Sonuç:** `1 → quiet` diye çevirmek davranışı **değiştirir**. Bugünkü davranışı
-korumak için AC/BAT varsayılanı **`balanced`** olmalı — makinenin aylardır
-gerçekten koştuğu mod bu.
+| yazılan | `0x2C` öncesi → sonrası | ne yaptı |
+|---|---|---|
+| `1` | `0x09` → `0x09` | b0 (`CRAF`) kurdu, **b3'e dokunmadı** |
+| `2` | `0x09` → `0x0a` | b1 (`FANB`) kurdu, b0'ı temizledi, b3'e dokunmadı |
+| `5` | `0x0a` → `0x0c` | b2 (`TENF`) kurdu, b1'i temizledi, b3'e dokunmadı |
+| `4` | `0x0c` → `0x04` | **b3'ü (`ADJF`) temizledi**, b2'yi bıraktı |
+
+Yani b0/b1/b2 birbirini dışlayan bir grup olarak yönetiliyor, ama **b3 desenin
+parçası sayılmıyor** — ve `fan_mode = 4` bir mod değil, "ADJF'yi kapat" işlemi.
+
+**Sonuç ADJF'nin o anki durumuna bağlı:**
+
+| yazılan | ADJF=1 iken | ADJF=0 iken |
+|---|---|---|
+| `1` "sessiz" | `0x09` = **mod4** ✗ | `0x01` = quiet ✓ |
+| `2` "gaming" | `0x0a` = **tanınmıyor → varsayılan** ✗ | `0x02` = gaming ✓ |
+| `5` "turbo" | `0x0c` = turbo ✓ | `0x04` = **tanınmıyor → varsayılan** ✗ |
+| `4` "dengeli" | `0x04` = **varsayılan** ✗ | `0x04` = **varsayılan** ✗ |
+
+**Dördünün de doğru çalıştığı bir ADJF durumu yok.**
+
+### İki somut kayıp (geçişin aciliyeti)
+
+1. **Oyun turbosu güvenilir değil.** `game-perf.service` `fan_mode = 5`
+   yazıyor. Bu yalnız ADJF=1 iken `0x0C` (turbo) veriyor; ADJF=0 iken `0x04`,
+   yani **varsayılan**. Sessizce.
+2. **Süper+M döngüsü ADJF'yi sıfırlıyor.** Döngü `4→1→2→5`; ilk adım "4" tam
+   olarak b3'ü temizleme işlemi. Ondan sonra hem döngünün kendi "Turbo"su hem
+   de sonraki `game-perf` turbosu `0x04` = varsayılan veriyor. Yani **Süper+M'yi
+   bir kez kullanmak turbo'yu erişilemez yapıyor** (bir sonraki `1` yazımına
+   kadar ADJF 0 kalıyor ve `1` de onu geri kurmuyor).
+
+Bizim sürücüde bu mümkün değil: hedef deseni dört seçiciyle tam yazıp yine dört
+seçiciyle geri okuyoruz, uyuşmazlıkta `-EIO` dönüyoruz.
+
+**Geçiş sonucu:** bugünkü davranışı korumak için AC/BAT varsayılanı
+**`balanced`** olmalı — makinenin aylardır gerçekten koştuğu mod bu
+(`fan_mode = 1` + ADJF=1 → `0x09`).
 
 > **Yan sonuç — `wmi.nix`'teki 16 Ağu 2026 ölçüm tablosu şüpheli.** O tablo
-> ("mod 4 / 1 / 2 / 5" sıcaklık-güç-fan karşılaştırması) `aorus_laptop`'ın
-> numaralandırmasıyla alınmış, yani hangi `0x2C` desenini ölçtüğü belirsiz.
-> Dördü de belirgin biçimde farklı davrandığına göre dört ayrı desendi, ama
-> hangisinin hangisi olduğu bilinmiyor. **Geçişten sonra bu tablo bizim
+> `aorus_laptop`'ın numaralandırmasıyla alınmış, yani hangi `0x2C` desenini
+> ölçtüğü ADJF geçmişine bağlı ve belirsiz. **Geçişten sonra bizim
 > isimlerimizle yeniden ölçülmeli.**
 
 Önerilen eşleme (isimden isme, sayıdan sayıya değil):
