@@ -233,7 +233,7 @@ index babd295..b4be6e2 100644
  trap cleanup EXIT INT TERM
  
 diff --git a/system/arch/aerox16/wmi.nix b/system/arch/aerox16/wmi.nix
-index 1ae076b..72a3fcd 100644
+index 1ae076b..ec9a719 100644
 --- a/system/arch/aerox16/wmi.nix
 +++ b/system/arch/aerox16/wmi.nix
 @@ -1,75 +1,67 @@
@@ -280,7 +280,7 @@ index 1ae076b..72a3fcd 100644
 +# gerçekten koştuğu mod bu, ve `quiet` yazmak davranışı DEĞİŞTİRİRDİ.
 +#
 +# Geçiş planı ve tam ölçüm: ~/aero-eg61h/docs/nixos-gecis.md
-+{ config, pkgs, inputs, ... }:
++{ inputs, ... }:
  
 -let
 -  kernel = config.boot.kernelPackages.kernel;

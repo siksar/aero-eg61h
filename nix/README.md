@@ -18,9 +18,16 @@ kullanıcının ve orada başka bekleyen işler var.
 cd ~/nixos-zixar
 git apply --check ~/aero-eg61h/nix/nixos-zixar-gecis.patch   # önce dene
 git apply         ~/aero-eg61h/nix/nixos-zixar-gecis.patch
-nixos-rebuild build --flake .#nixos                          # doğrula
+bash scripts/verify-context.sh                               # ← ASIL KAPI
 sudo nixos-rebuild switch --flake .#nixos                    # senin kararın
 ```
+
+> **`verify-context.sh` atlanmaz.** `nixos-rebuild build`'in geçmesi yetmez:
+> 8 Eyl 2026'da bu yamanın ilk sürümü eval'den geçti ama `deadnix`'e takıldı —
+> yeni `wmi.nix` `{ config, pkgs, inputs, ... }` alıp yalnız `inputs`
+> kullanıyordu. Yamayı üretirken `nix eval` çalıştırılmış, deponun kendi
+> kapısı çalıştırılmamıştı. Düzeltildi (`{ inputs, ... }`), ve ders burada:
+> **bu depoda doğrulama `verify-context.sh`'tir**, eval değil.
 
 ### Yama ne yapıyor (11 dosya)
 
@@ -50,6 +57,7 @@ bir dizine kopyalandı, değişiklik orada yapıldı, orada değerlendirildi.
 | Yeni servisler | ✅ `aero-{power-profile,charge-limit,fan-cycle}` |
 | Eski servisler | ✅ **hiçbiri kalmadı** (`gigabyte-*`, `fan-mode-cycle`) |
 | `git apply --check` gerçek depoda | ✅ temiz uygulanır |
+| **`scripts/verify-context.sh`** (uygulandıktan sonra) | ✅ **TÜM KONTROLLER GEÇTİ** — eval, statix, deadnix |
 
 ### Uygulamadan sonra
 
