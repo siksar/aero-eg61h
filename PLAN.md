@@ -459,9 +459,30 @@ Mod 4 daha önce "erişilemez" sanılıyordu. §5'e işlendi.
 **Yan bulgu 2:** hücre başına pil gerilimi kanalı canlı doğrulandı
 (3829/3844/3848/3850 mV, toplam `voltage_now`'u %0.3 içinde takip ediyor).
 
-### ⏳ Ölçüm 2 — klavye ışığı görsel testi — **BEKLİYOR**
+### ✅ Ölçüm 2 — klavye ışığı görsel testi — **YAPILDI 7 Eyl 2026, ÖLÜ YAZMAÇ**
 
-`sudo ~/ecscope/fw/kbll-test.sh` hazır. **Önkoşul: Fn+Space ile aydınlatmayı
-AÇIN** — kapalıyken yapılan test sonuçsuzdur (29 Tem 2026'da öyle olmuştu).
-Betik 0-4 seviyelerini 4'er saniye gezer, sonra eski değeri geri yükler.
-Karar D5 ve "Klavye ve Işıklar" panelinin varlığı buna bağlı.
+`fw/kbll-test.sh`, aydınlatma **açıkken** iki koşuda çalıştırıldı (0↔4 arası üç
+gidiş-geliş, 5 sn bekleme). `KBLL` (`WMBD 0xF6`) yazılanı tutuyor ve `WMBC 0xF6`
+geri okuması doğruluyor — ama klavyede **ne parlaklık ne renk değişti**.
+Ayrıca klavye yanarken başlangıç değeri **0** okudu.
+
+`FDTY`/`FAN1`/`XFNW` ile aynı **ölü yazmaç** sınıfı. Aydınlatmayı süren yol HID
+LampArray ve o zaten çalışıyor.
+
+**Sonuç:** D5 kapandı (HAYIR), `led_classdev` sunulmayacak, "Klavye ve Işıklar"
+paneli v1'de yok. Klavye özelleştirmesi LampArray protokolü üzerinden, ayrı ve
+sonraki bir iş.
+
+### ✅ Ölçüm 3 — çekirdek durum taraması — **YAPILDI 7 Eyl 2026 (akşam)**
+
+Adım 1'i yazmadan önce sürücünün bağlanacağı zemin ölçüldü:
+
+| ne | ölçüm | sürücüye etkisi |
+|---|---|---|
+| `/sys/bus/wmi/drivers/` | **boş**, dört GUID sahipsiz | `wmi_driver` yolu açık |
+| `platform-profile-0` | sahibi `amd-pmf`, seçenekler `low-power balanced performance` | K1 = (a′): seçim kümemiz bunu **kapsamalı** |
+| `power-profiles-daemon` | 0.30, `PlatformDriver: platform_profile` | 4. adımda birlikte ölçülecek |
+| `BAT1/extensions/` | **var ve boş** | `charge_control_end_threshold` temiz eklenir |
+| `CONFIG_IO_STRICT_DEVMEM` | **`y`** | K2'nin riski gerçek: `request_mem_region` `/dev/mem`'i kapatır |
+| `wmi_find_device_by_guid()` | başlıkta **yok**, `Module.symvers`'te **yok** | tasarımdan sapıldı: üç ayrı sürücü |
+| DMI | `GIGABYTE` / `EG61VH` / BIOS `FB0A` | DMI kapısı bu ikiliyle eşleşiyor |
