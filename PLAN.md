@@ -363,7 +363,7 @@ Her adım tek başına çalışır ve tek başına doğrulanır.
 |---|---|---|---|
 | 1 | **Çekirdek sürücüsü iskeleti** — üç `wmi_driver`, `WMBC`/`WMBD` sarmalayıcı | `/sys/bus/wmi/drivers/aero_eg61h` görünür | ✅ **7 Eyl 2026** |
 | 2 | **hwmon** — 1 sıcaklık + 2 fan, salt okunur (SKTC ölü çıktı) | yük altında CPU 45→91 °C, fanlar 0→3400 rpm | ✅ **7 Eyl 2026** |
-| 3 | **`charge_control_end_threshold`** + uyanış kancası | 60→80→45→60, hepsi geri okumayla eşleşti | ✅ **7 Eyl 2026** ¹ |
+| 3 | **`charge_control_end_threshold`** + uyanış kancası | 60→80→45→60 geri okumayla eşleşti; kanca uyanışta tetiklendi | ✅ **7 Eyl 2026** |
 | 4 | **Fan modu** — beş mod, özel sysfs (K1 = a′: `platform_profile`'a girmez) | turbo boşta fanları 0→7000 rpm'e çıkardı | ✅ **7 Eyl 2026** |
 | 5 | **`platform_profile`** — yalnız `0xED` | PPD + `power-display.nix` etkileşimi ölçülür | sırada |
 | 6 | **Daemon** — D-Bus arayüzü + polkit, sürücüsüz `degraded` kipi dahil | `busctl` ile elle çağırma | |
@@ -372,9 +372,6 @@ Her adım tek başına çalışır ve tek başına doğrulanır.
 | 9 | **Gelişmiş menü** — ayrık kontroller + onay diyalogları | `DIKKAT` ayarları parola istiyor, geri al çalışıyor | |
 | 10 | **EC İncelemesi paneli** | çıktı `ecpoke` ölçümüyle bayt-birebir | |
 | 11 | **NixOS geçişi** — `aorus_laptop` bırakılır | `docs/nixos-gecis.md` | **kullanıcı onayıyla** |
-
-¹ Yazma yolu doğrulandı; uyanış kancası gerçek bir suspend ile **henüz test
-edilmedi** (`kernel/README.md`).
 
 Adım 7'ye kadar sürücü şart değil (daemon `acpi_call` yoluna düşer), yani GUI
 paralel geliştirilebilir.
@@ -605,3 +602,24 @@ Sürücümüz `charge_mode` sunmuyor, o yüzden geçiş öncesi ölçüldü:
 
 **Sonuç:** boşluk tahminle değil `acpi_call` ile kapanıyor —
 `\_SB.PCI0.AMW0.WMBD 0 0x64 4`. Ayrıntı `docs/nixos-gecis.md` §3.
+
+### ✅ Ölçüm 8 — uyanış kancası — **YAPILDI 7 Eyl 2026, 19:06**
+
+```
+[83674.484050] aero_eg61h: uyanis: sarj limiti 60% korunmus, dokunulmadi
+```
+
+**Kapanan soru:** `driver->pm` WMI bus'ında tetikleniyor mu? **Evet.**
+`wmi_bus_type` kendi bir resume geri çağrısı sunmuyor, dolayısıyla sürücünün
+`DEFINE_SIMPLE_DEV_PM_OPS`'u çalışıyor. `register_pm_notifier` yoluna gerek yok.
+
+**Açılan soru:** kancanın dayandığı hüküm — "EC şarj limitini uyanışta geri
+alıyor" (6 Eyl) — bu s2idle döngüsünde **tekrarlanmadı**; limit korunmuştu.
+Bu makinede hibernate kapalı (`nohibernate`, `power.nix`, 24 Ağu 2026), yani
+o gözlem başka bir uyku tipinden de gelemez. 6 Eyl gözlemi `aorus_laptop`'ın
+`charge_limit` geri okumasına dayanıyordu ve o sürücünün yanlış bildirdiği
+artık ölçüldü (Ölçüm 7).
+
+**Hüküm "ölçüldü" → "tekrarlanmadı" oldu.** Kanca kalıyor: bedeli bir okuma
+ve gerçekten geri alınan bir durum olursa yakalıyor — ama kanıtlanmış bir
+gereklilik olarak sunulmuyor.

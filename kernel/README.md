@@ -10,14 +10,11 @@ sürücüsü. Tasarım kararları `~/ecscope/docs/surucu-tasarim.md`'de, ölçü
 |---|---|---|
 | 1 | İskelet: üç `wmi_driver`, `WMBC`/`WMBD` sarmalayıcıları | ✅ **doğrulandı** |
 | 2 | hwmon — salt okunur sıcaklık + fan | ✅ **doğrulandı** |
-| 3 | `charge_control_end_threshold` (+ uyanış kancası) | ✅ **doğrulandı** ¹ |
+| 3 | `charge_control_end_threshold` + uyanış kancası | ✅ **doğrulandı** |
 | 4 | Fan modu — beş mod, özel sysfs | ✅ **doğrulandı** |
 | 5 | `platform_profile` (yalnız `0xED`, K1 = a′) | sırada |
 | 6 | Olay kanalı + `sparse_keymap` doldurma | kısmen (log var, tablo yok) |
 | 7 | debugfs: eğri okuyucu, `EIDR` (`ECTE` denetimiyle) | bekliyor |
-
-¹ Yazma yolu doğrulandı; **uyanış kancası gerçek bir suspend ile HENÜZ test
-edilmedi** — ayrıntı aşağıda.
 
 ### Sunulan arayüz
 
@@ -174,13 +171,37 @@ aero_eg61h: sarj limiti hazir: BAT1/charge_control_end_threshold = 60%
 Yazımlar sırasında dmesg **sessiz** — yani "yaz + geri oku + karşılaştır"
 denetimi hiç uyuşmazlık görmedi. Değer başladığı yerde (%60) bırakıldı.
 
-> **AÇIK: uyanış kancası test edilmedi.** `.resume` geri çağrısı yazıldı ama
-> gerçek bir suspend/resume ile denenmedi. PM çekirdeği sürücünün `pm` ops'unu
-> yalnız bus kendi bir geri çağrı sunmadığında çağırıyor; WMI bus'ın pm ops'u
-> bu çekirdekte incelenemedi (dev çıktısında `drivers/` yok).
-> **Test:** limiti yaz → uyut → uyandır → `sudo dmesg | grep uyanis`.
-> Satır yoksa yol `register_pm_notifier(PM_POST_SUSPEND)` olacak — o bus'tan
-> bağımsız çalışır.
+### Uyanış kancası — DOĞRULANDI (7 Eyl 2026, 19:06)
+
+```
+[83674.484050] aero_eg61h: uyanis: sarj limiti 60% korunmus, dokunulmadi
+```
+
+**İki şey birden kapandı.**
+
+1. **`driver->pm` WMI bus'ında çalışıyor.** Açık soru şuydu: PM çekirdeği
+   sürücünün `pm` ops'unu yalnız bus kendi bir geri çağrı sunmadığında çağırıyor
+   ve `wmi_bus_type`'ın pm ops'u incelenemedi (dev çıktısında `drivers/` yok).
+   Satır geldiğine göre bus geri çağrı sunmuyor ve bizim `DEFINE_SIMPLE_DEV_PM_OPS`
+   yolumuz tetikleniyor. **`register_pm_notifier`'a gerek yok.**
+
+2. **Kanca doğru davrandı:** geri okudu, eşleşti, **dokunmadı**. Zorlamıyor —
+   yalnız gerekiyorsa yeniden uyguluyor.
+
+> **Ama kancanın dayandığı hüküm artık şüpheli.** 6 Eyl'de "EC şarj limitini
+> uyanışta %100'e geri alıyor" denmişti. Bugünkü s2idle döngüsünde **geri
+> almadı**. Dahası bu makinede hibernate **kapalı** (`nohibernate` çekirdek
+> parametresi, `power.nix`, 24 Ağu 2026), yani tek uyku durumu s2idle —
+> o gözlem başka bir uyku tipinden de gelemez.
+>
+> 6 Eyl gözlemi `aorus_laptop`'ın `charge_limit` geri okumasına dayanıyordu ve
+> o sürücünün `fan_mode`'u yanlış bildirdiğini artık **ölçtük**. Muhtemel
+> açıklamalar: boot servisinin yazımı tutmadı, ya da geri okuma yanlıştı.
+>
+> **Hüküm "ölçüldü"den "tekrarlanmadı"ya indi.** Kanca yerinde kalıyor —
+> bedeli bir okuma, ve gerçekten geri alınan bir durum çıkarsa yakalıyor —
+> ama artık *kanıtlanmış bir gereklilik* olarak sunulmuyor.
+
 
 ## Adım 4 doğrulama koşusu — fan modu (7 Eyl 2026)
 

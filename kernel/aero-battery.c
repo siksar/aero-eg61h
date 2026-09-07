@@ -20,11 +20,23 @@
  *    WMBC 0x65 ile GERİ OKUYUP karşılaştırıyoruz. Yazma+okuma tek kilit
  *    altında yapılıyor ki araya başka bir yazan girmesin.
  *
- * 2. EC LİMİTİ UYANIŞTA GERİ ALIYOR (6 Eyl 2026 ölçümü: boot servisi 60
- *    yazmıştı, sysfs değişim zamanı hâlâ boot anındayken değer %100'e
- *    dönmüştü — yani kimse 100 yazmadı, EC kendi geri aldı). Bu yüzden
- *    uyanışta yeniden uygulayan bir kanca var. Bu adımın asıl işi bu;
- *    yazmanın kendisi kolay kısım.
+ * 2. EC LİMİTİ UYANIŞTA GERİ ALIYOR — ŞÜPHELİ, 7 Eyl'de TEKRARLANMADI.
+ *    6 Eyl hükmü: boot servisi 60 yazmıştı, sysfs değişim zamanı hâlâ boot
+ *    anındayken değer %100 okuyordu — yani kimse 100 yazmadı, EC kendi geri
+ *    aldı. Ama o gözlem `aorus_laptop`'ın charge_limit geri okumasına
+ *    dayanıyordu, ve o sürücünün fan_mode'u yanlış bildirdiği artık ÖLÇÜLDÜ.
+ *
+ *    7 Eyl'de bu sürücüyle bir s2idle döngüsü yapıldı: limit KORUNDU, kanca
+ *    geri okuyup eşleşti ve dokunmadı. Bu makinede hibernate kapalı
+ *    (nohibernate, power.nix 24 Ağu 2026), yani başka bir uyku tipi de yok.
+ *
+ *    Kanca yine de duruyor: bedeli tek bir okuma, gerçekten geri alınan bir
+ *    durum çıkarsa yakalıyor, ve zorlamıyor — yalnız BİZ yazdıysak ve değer
+ *    kaymışsa yeniden uyguluyor. Ama artık "kanıtlanmış gereklilik" değil.
+ *
+ *    Kancanın kendisi 7 Eyl 19:06'da DOĞRULANDI: `driver->pm` WMI bus'ında
+ *    tetikleniyor (bus kendi resume geri çağrısı sunmuyor), yani
+ *    `register_pm_notifier` yoluna gerek yok.
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
