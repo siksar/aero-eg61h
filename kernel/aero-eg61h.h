@@ -44,7 +44,6 @@
  * Hepsi salt okuma; yan etkisi yok. Tek istisna 0x68 (aşağıda, kullanılmıyor).
  */
 #define AERO_RD_CPU_TEMP	0xE1	/* CTMP  ECMM+0xB0, °C            */
-#define AERO_RD_SOC_TEMP	0xE2	/* SKTC  ECMM+0xB4, °C  (0xE3 aynı alan) */
 #define AERO_RD_FAN1_RPM	0xE4	/* RPM1  PECM+0x13, 16 bit        */
 #define AERO_RD_FAN2_RPM	0xE5	/* RPM2  PECM+0x15, 16 bit        */
 #define AERO_RD_CHARGE_LIMIT	0x65	/* BCPC  PECM+0x05, %            */
@@ -68,6 +67,21 @@
 #define AERO_WR_FAN_ADJF	0x6A	/* ADJF=val                               */
 #define AERO_WR_CHARGE_LIMIT	0x65	/* BCPC=val (%) — UYANIŞTA EC GERİ ALIYOR */
 #define AERO_WR_PERF_PROFILE	0xED	/* 0-3: CPU PL1/2/3 + dGPU bütçesi paketi */
+
+/*
+ * ÖLÜ KANAL — ölçüldü, sunulmayacak
+ *
+ *   0xE2 / 0xE3  SKTC (ECMM+0xB4, "soket sıcaklığı")
+ *
+ * İki seçici de aynı alanı okuyor ve o alan bu makinede HEP SIFIR.
+ * 7 Eyl 2026, iki bağımsız koşu:
+ *   - boşta:  WMBC 0xE2 = 0, aorus_laptop temp2_input = 0 (aynı anda)
+ *   - tam yük: CPU 91 °C, fanlar 3333/3703 rpm dönerken  WMBC 0xE2 = 0
+ * Yani okuma doğru, alan boş. hwmon'a temp2 GİRMİYOR.
+ *
+ * aorus_laptop bu makinede temp2 VE temp3 sunuyor, ikisi de sıfır okuyor —
+ * pwm1/pwm2 ile aynı hata sınıfı: ölçülmemiş bir kanalı varmış gibi göstermek.
+ */
 
 /*
  * ---------------------------------------------------------------------------
@@ -149,5 +163,9 @@ void aero_ec_lock(void);
 void aero_ec_unlock(void);
 int __aero_ec_read(u8 selector, u32 arg, u32 *value);
 int __aero_ec_write(u8 selector, u32 value);
+
+/* hwmon katmanı (aero-hwmon.c) — tamamı salt okunur, yoklama yok */
+int aero_hwmon_init(struct device *parent);
+void aero_hwmon_exit(void);
 
 #endif /* _AERO_EG61H_H */

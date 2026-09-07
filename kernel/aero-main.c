@@ -226,20 +226,24 @@ static const char *aero_fan_mode_name(u8 pattern)
 }
 
 /*
- * Bağlanma kanıtı. Adım 1'in tek çıktısı bu: okuma yolunun gerçekten çalıştığını
- * tek seferlik bir okumayla gösterir. Yoklama DEĞİL — bir kez, probe anında.
- * (Boşta güç bütçesi kuralı: bu sürücü boştayken hiçbir şey okumaz.)
+ * Bağlanma kanıtı + üst katmanların kurulması.
+ *
+ * Kanıt okuması tek seferlik — probe anında, bir kez. YOKLAMA DEĞİL: bu sürücü
+ * boştayken hiçbir şey okumaz (4.28 W boşta güç bütçesi kuralı). hwmon da
+ * kendiliğinden okumaz; her okuma userspace bir dosyayı okuduğunda olur.
  */
 static void aero_core_attach(void)
 {
-	u32 cpu = 0, soc = 0, rpm1 = 0, rpm2 = 0;
+	u32 cpu = 0, rpm1 = 0, rpm2 = 0;
+	struct device *parent;
 	u8 pattern = 0xff;
 	int ret;
 
 	aero_ec_lock();
+	/* İşaretçiyi kilit altında yakala: eşzamanlı bir remove onu
+	 * sıfırlayabilir ve hwmon ebeveyni olarak kullanacağız. */
+	parent = aero.wmbd ? &aero.wmbd->dev : NULL;
 	ret = __aero_ec_read(AERO_RD_CPU_TEMP, 0, &cpu);
-	if (!ret)
-		ret = __aero_ec_read(AERO_RD_SOC_TEMP, 0, &soc);
 	if (!ret)
 		ret = __aero_ec_read(AERO_RD_FAN1_RPM, 0, &rpm1);
 	if (!ret)
@@ -254,14 +258,25 @@ static void aero_core_attach(void)
 		return;
 	}
 
-	pr_info("EC okuma yolu calisiyor: CPU %u C, soket %u C, fan %u/%u rpm\n",
-		cpu, soc, rpm1, rpm2);
+	pr_info("EC okuma yolu calisiyor: CPU %u C, fan %u/%u rpm\n",
+		cpu, rpm1, rpm2);
 	pr_info("fan modu: 0x%02x (%s)\n", pattern, aero_fan_mode_name(pattern));
+
+	if (!parent) {
+		pr_warn("WMBD cihazi kayboldu — hwmon kurulmuyor\n");
+		return;
+	}
+
+	ret = aero_hwmon_init(parent);
+	if (ret)
+		pr_warn("hwmon kaydedilemedi (%d) — sensor kanallari yok\n", ret);
+	else
+		pr_info("hwmon hazir: temp1 (CPU), fan1, fan2 — salt okunur\n");
 }
 
 static void aero_core_detach(void)
 {
-	/* Adım 1'de sökülecek bir şey yok; hwmon/psy/platform_profile buraya gelecek. */
+	aero_hwmon_exit();
 }
 
 /*

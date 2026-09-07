@@ -3,7 +3,7 @@
 > 7 Eylül 2026 · Gigabyte AERO X16 1VH (SKU EG61VH) · BIOS FB0A / EC F00A
 > Masaüstü: **COSMIC** (System76) · NixOS · çekirdek 7.2.2-cachyos-lto
 >
-> **Durum: adım 1 yazıldı ve doğrulandı** (§10). Kalan adımlar hâlâ plan.
+> **Durum: adım 1 ve 2 yazıldı ve doğrulandı** (§10). Kalan adımlar hâlâ plan.
 > Kararların tamamı §12'de; sürücü kararları (K1-K5) 7 Eyl'de kapandı.
 
 ---
@@ -44,7 +44,7 @@ Eğriler **güç kaynağına göre değişmiyor** (7 Eyl ölçümü, `firmware-8
 
 ### Sadece okuyabildiklerimiz
 
-CPU/soket sıcaklığı, iki fanın RPM'i, AC/pil durumu, kapak, dGPU GC6 kapısı,
+CPU sıcaklığı, iki fanın RPM'i, AC/pil durumu, kapak, dGPU GC6 kapısı,
 **hücre başına pil gerilimi** (Linux'ta bu makinede hiç yok), aktif fan eğrisi
 tabloları (yavaş, mailbox üzerinden).
 
@@ -53,6 +53,8 @@ tabloları (yavaş, mailbox üzerinden).
 - **Yazılabilir fan hızı/duty** — yazmaçlar ölü (üç bağımsız kanıt).
   `aorus_laptop` bunu sunuyor ve yalan söylüyor; tekrarlamayacağız.
 - **Fan eğrisi düzenleyici** — eğri tablosunun veri portu salt-okunur.
+- **Soket sıcaklığı (`SKTC`)** — ölü kanal: tam yükte CPU 91 °C iken bile 0
+  okuyor (7 Eyl ölçümü). `aorus_laptop` bunu `temp2`/`temp3` olarak sunuyor.
 - **Klavye aydınlatma LED sınıfı** — `KBLL` (`WMBD 0xF6`) ölü yazmaç: yazılıyor,
   tutuyor, görsel etkisi yok (7 Eyl ölçümü, aydınlatma açıkken). Aydınlatma
   HID LampArray ile sürülüyor; o ayrı bir iş.
@@ -148,8 +150,8 @@ Her panel yalnız **gerçekten sunabildiğimiz** şeyleri içerir.
 
 | # | panel | içerik |
 |---|---|---|
-| 1 | **Durum** | Canlı özet: CPU/soket sıcaklığı, iki fan RPM, güç kaynağı, aktif profil, pil %/sağlık. Salt okunur pano. |
-| 2 | **Fan ve Termal** | Fan modu seçimi (**5 mod** — mod 4 dahil, aşağı bak). Canlı sıcaklık + RPM. *Gelişmiş:* termal setpoint (`DPTT 0x03`). |
+| 1 | **Durum** | Canlı özet: CPU sıcaklığı, iki fan RPM, güç kaynağı, aktif profil, pil %/sağlık. Salt okunur pano. (Soket sıcaklığı YOK — ölü kanal.) |
+| 2 | **Fan ve Termal** | Fan modu seçimi (**5 mod** — mod 4 dahil, aşağı bak). Canlı CPU sıcaklığı + iki fan RPM. *Gelişmiş:* termal setpoint (`DPTT 0x03`). |
 | 2b | **Fan Eğrisi** | Seçili modun eğrisini **sıcaklık fonksiyonu olarak** çizen grafik paneli — ayrıntı §4.1 |
 | 3 | **Güç ve Performans** | Performans profili (`0xED` 0-3). *Gelişmiş:* dGPU Dynamic Boost bütçesi, AMAT, boost aç/kapa. |
 | 4 | **Pil** | Şarj limiti kaydırıcısı. Hücre başına gerilim (4 hücre). Döngü sayısı, sağlık. Uyanışta yeniden uygulama anahtarı. |
@@ -359,8 +361,8 @@ Her adım tek başına çalışır ve tek başına doğrulanır.
 | # | adım | doğrulama | durum |
 |---|---|---|---|
 | 1 | **Çekirdek sürücüsü iskeleti** — üç `wmi_driver`, `WMBC`/`WMBD` sarmalayıcı | `/sys/bus/wmi/drivers/aero_eg61h` görünür | ✅ **7 Eyl 2026** |
-| 2 | **hwmon** — 2 sıcaklık + 2 fan, salt okunur | `sensors` değerleri `aorus_laptop`'ınkiyle aynı | sırada |
-| 3 | **`charge_control_end_threshold`** + uyanış kancası | 60 yaz, uyku/uyanma, hâlâ 60 | |
+| 2 | **hwmon** — **1** sıcaklık + 2 fan, salt okunur (SKTC ölü çıktı) | yük altında CPU 45→91 °C, fanlar 0→3400 rpm | ✅ **7 Eyl 2026** |
+| 3 | **`charge_control_end_threshold`** + uyanış kancası | 60 yaz, uyku/uyanma, hâlâ 60 | sırada — **ilk yazma yolu** |
 | 4 | **Daemon** — D-Bus arayüzü + polkit, sürücüsüz `degraded` kipi dahil | `busctl` ile elle çağırma | |
 | 5 | **GUI iskeleti** — `nav_bar` + 7 panel, hepsi salt okunur | tema COSMIC ile uyumlu, gece/gündüz çalışıyor | |
 | 6 | **Basit menü** — 5 ön ayar + 1 kaydırıcı | ön ayara basınca `EIDR 0xF8AC`'de eğri gerçekten değişiyor | |
@@ -389,7 +391,28 @@ yakalandı.
 > dışa aktarılıyor. Yerine üç ayrı sürücü + modül genelinde paylaşılan durum
 > kullanıldı. Gerekçe `kernel/README.md`'nin son bölümünde.
 
+### Adım 2 — ne yapıldı (7 Eyl 2026)
+
+`kernel/aero-hwmon.c`: **tamamı salt okunur** hwmon. Üç kanal —
+`temp1` (CPU, `WMBC 0xE1`), `fan1` / `fan2` (`WMBC 0xE4`/`0xE5`) + etiketleri.
+`/sys/class/hwmon/hwmonN/` altında tam olarak yedi dosya, **yazılabilir tek bir
+öznitelik yok**, `pwm*` yok.
+
+Yük altında doğrulandı (16 iş parçacığı, 75 s): CPU 45 → 91 °C, fanlar
+0 → 3400/3700 rpm, yük kalkınca 56 °C / 2127 / 2702. Üç kanal da gerçek fiziği
+takip ediyor; fanlar mod 4'ün eşiğinde gerçekten duruyor.
+
+> **`SKTC` kapandı — ölü kanal.** `temp2` adayı iki bağımsız koşuda da 0 okudu:
+> boşta, **ve tam yükte CPU 91 °C / fanlar 3333-3703 rpm dönerken**. Okuma
+> doğru, alan boş → `temp2` sunulmuyor. Aynı koşu `aorus_laptop`'ın **üçüncü**
+> hatasını belgeliyor: o `temp2` ve `temp3` sunuyor, ikisi de sabit sıfır.
+>
+> **Fan etiketleri `Fan 1`/`Fan 2`.** Tasarım belgesi `CPU Fan`/`GPU Fan`
+> diyordu — ölçülmemiş bir tahmin. Firmware fanları yalnız "fan 0"/"fan 1"
+> diye adlandırıyor, DSDT'de `RPM1`/`RPM2` dışında isim yok.
+
 ---
+
 ## 11. İstek kuyruğu
 
 Kullanıcı uygulamayı denedikçe buraya yazılacak. Biçim: tarih · istek · durum.
@@ -433,6 +456,7 @@ Kullanıcı uygulamayı denedikçe buraya yazılacak. Biçim: tarih · istek · 
 | K5 | Manuel fan duty izi | **(b) sonraya.** v1 zaten `pwm` sunmuyor; firmware'deki manuel duty yolunun host'tan erişilebilirliği bulunursa v2'de eklenir. |
 
 ---
+
 ## 13. Ölçümler
 
 ### ✅ Ölçüm 1 — AC/DC eğri ayrımı — **YAPILDI 7 Eyl 2026, hipotez ÇÜRÜDÜ**
@@ -486,3 +510,28 @@ Adım 1'i yazmadan önce sürücünün bağlanacağı zemin ölçüldü:
 | `CONFIG_IO_STRICT_DEVMEM` | **`y`** | K2'nin riski gerçek: `request_mem_region` `/dev/mem`'i kapatır |
 | `wmi_find_device_by_guid()` | başlıkta **yok**, `Module.symvers`'te **yok** | tasarımdan sapıldı: üç ayrı sürücü |
 | DMI | `GIGABYTE` / `EG61VH` / BIOS `FB0A` | DMI kapısı bu ikiliyle eşleşiyor |
+
+### ✅ Ölçüm 4 — `SKTC` yük altında — **YAPILDI 7 Eyl 2026, ÖLÜ KANAL**
+
+`temp2` adayının canlı olup olmadığı adım 2'nin ön koşuluydu. Yöntem: hwmon
+kanalları okunurken 16 iş parçacığı yük (`taskset -c 0-15 yes`), 75 s.
+
+| | boşta | t=15s | t=30s | t=45s | t=60s | t=75s | soğurken |
+|---|---|---|---|---|---|---|---|
+| `temp1` (CTMP) °C | 45 | 85 | 87 | 89 | 90 | 91 | 56 |
+| `fan1` rpm | 0 | 2678 | 3409 | 3409 | 3448 | 3333 | 2127 |
+| `fan2` rpm | 0 | 2586 | 3614 | 3658 | 3614 | 3703 | 2702 |
+| **`SKTC`** (`0xE2`) | **0** | | | | | **0** | |
+
+**Sonuç: `SKTC` ölü.** CPU 91 °C, fanlar 3333/3703 rpm dönerken bile 0.
+Okuma yolu doğru (aynı çağrı zinciri `CTMP`'yi doğru okuyor), alan boş.
+`temp2` sunulmuyor ve bu kanal bir daha açılmayacak. `0xE3` aynı alanı okuduğu
+için o da ölü.
+
+**Yan bulgu:** `aorus_laptop` bu makinede `temp2` **ve** `temp3` sunuyor, ikisi
+de sabit sıfır. `pwm1`/`pwm2` (yazılıyor, fan umursamıyor) ve `fan_mode`
+(yanlış değer bildiriyor) ile birlikte, aynı sürücünün aynı hata sınıfından
+**üç ayrı örneği** — bu deponun var olma sebebinin canlı belgesi.
+
+**Yan bulgu 2:** mod 4'ün eğrisi doğrulandı — 91 °C'de fanlar yalnız ~3400/3700
+rpm'de kalıyor (tavan %43). Turbo'nun düz %63'ü ile arasındaki fark bu.

@@ -4,16 +4,27 @@ Gigabyte AERO X16 1VH (SKU **EG61VH**, BIOS FB0A, EC F00A) için WMI platform
 sürücüsü. Tasarım kararları `~/ecscope/docs/surucu-tasarim.md`'de, ölçüm tabanı
 `~/ecscope/docs/{yazma-ve-ic-uzay,firmware-8051,aero-x16-catalogue}.md`'de.
 
-## Durum: adım 1 tamamlandı (7 Eyl 2026)
+## Durum: adım 2 tamamlandı (7 Eyl 2026)
 
 | adım | ne | durum |
 |---|---|---|
 | 1 | İskelet: üç `wmi_driver`, `WMBC`/`WMBD` sarmalayıcıları | ✅ **doğrulandı** |
-| 2 | hwmon — 2 sıcaklık + 2 fan, salt okunur | bekliyor |
-| 3 | `charge_control_end_threshold` + uyanış kancası | bekliyor |
+| 2 | hwmon — salt okunur sıcaklık + fan | ✅ **doğrulandı** |
+| 3 | `charge_control_end_threshold` + uyanış kancası | sırada |
 | 4 | `platform_profile` (yalnız `0xED`, K1 = a′) | bekliyor |
 | 5 | Olay kanalı + `sparse_keymap` doldurma | kısmen (log var, tablo yok) |
 | 6 | debugfs: eğri okuyucu, `EIDR` (`ECTE` denetimiyle) | bekliyor |
+
+
+### Dosyalar
+
+```
+aero-eg61h.h   ortak tanimlar: WMI GUID'leri, secici sabitleri, struct aero_ec
+aero-main.c    WMI baglanma, WMBC/WMBD sarmalayicilari, DMI + cakisma kapilari
+aero-hwmon.c   hwmon katmani — TAMAMI SALT OKUNUR
+Makefile       aero-eg61h-y := aero-main.o aero-hwmon.o
+build.sh       arac zincirini ~/nixos-zixar flake'inden ceker
+```
 
 ## Derleme
 
@@ -70,18 +81,67 @@ olarak ikinci kez yakalandı (ilki 7 Eyl öğleden sonra, `ecpoke` ile).
 | Soket (`SKTC`) | 0 °C | 0 °C (`temp2`) |
 | Fan 1 / Fan 2 | 0 / 0 rpm | 0 / 0 rpm |
 
-> **Adım 2 için açık soru:** `SKTC` boştayken **0** okuyor. Sabit sıfırsa bu ölü
-> bir kanaldır ve `temp2` olarak sunmak kendi kuralımızı çiğner ("ölçülmemiş /
-> çalışmayan yeteneği sunma"). Yük altında ölçülmeden `temp2` eklenmeyecek.
+> **Bu soru adım 2'de kapandı:** `SKTC` yük altında da 0 okuyor → ölü kanal,
+> `temp2` sunulmuyor. Ayrıntı aşağıda.
 
-## Bu adımda bilerek YOK olanlar
+## Adım 2 doğrulama koşusu (7 Eyl 2026)
 
-- Hiçbir sysfs düğümü, hwmon kanalı ya da `platform_profile` girişi
-- Hiçbir yazma yolu (`WMBD` sarmalayıcısı var ama hiç çağrılmıyor)
+```
+aero_eg61h: EC okuma yolu calisiyor: CPU 45 C, fan 0/0 rpm
+aero_eg61h: fan modu: 0x09 (mod4)
+aero_eg61h: hwmon hazir: temp1 (CPU), fan1, fan2 — salt okunur
+```
+
+`/sys/class/hwmon/hwmonN/` (`name = aero_eg61h`) altında **tam olarak yedi**
+dosya: `name`, `temp1_input`, `temp1_label`, `fan1_input`, `fan1_label`,
+`fan2_input`, `fan2_label`. Yazılabilir tek bir öznitelik yok, `pwm*` yok.
+
+Yük altında (16 iş parçacığı, `taskset -c 0-15 yes`):
+
+| | boşta | t=15s | t=30s | t=45s | t=60s | t=75s | soğurken |
+|---|---|---|---|---|---|---|---|
+| `temp1` °C | 45 | 85 | 87 | 89 | 90 | 91 | 56 |
+| `fan1` rpm | 0 | 2678 | 3409 | 3409 | 3448 | 3333 | 2127 |
+| `fan2` rpm | 0 | 2586 | 3614 | 3658 | 3614 | 3703 | 2702 |
+
+Üç kanal da gerçek fiziği takip ediyor: fanlar mod 4'ün eşiğinde gerçekten
+duruyor, yük gelince dönüyor, yük kalkınca düşüyor.
+
+### `SKTC` kapandı — ÖLÜ KANAL
+
+`temp2` adayı olan `SKTC` (`WMBC 0xE2`/`0xE3`, `ECMM+0xB4`) **iki bağımsız
+koşuda da 0 okudu**:
+
+- boşta `0` — ve `aorus_laptop`'ın `temp2_input`'u da aynı anda `0`
+- **tam yükte, CPU 91 °C ve fanlar 3333/3703 rpm dönerken, hâlâ `0`**
+
+Okuma doğru, alan boş. **`temp2` sunulmayacak** — bu kanal bir daha açılmayacak.
+
+Aynı koşu `aorus_laptop`'ın üçüncü hatasını da belgeliyor: o sürücü bu makinede
+`temp2` **ve** `temp3` sunuyor, ikisi de sabit sıfır. `pwm1`/`pwm2` (yazılıyor,
+fan umursamıyor) ve `fan_mode` (yanlış değer bildiriyor) ile birlikte, aynı
+sürücünün aynı hata sınıfından **üç ayrı örneği**.
+
+### Fan etiketleri: `Fan 1` / `Fan 2`, `CPU Fan` / `GPU Fan` değil
+
+Tasarım belgesi `CPU Fan`/`GPU Fan` öneriyordu — ama bu **ölçülmemiş bir
+tahmin**. Firmware fanları yalnız "fan 0" / "fan 1" diye adlandırıyor
+(`firmware-8051.md` §4, eğri tabloları ve kural tablosu), DSDT'de de `RPM1`/
+`RPM2`'den başka bir isim yok. Hangi fanın neyi soğuttuğu ölçülene kadar
+etiketler dürüst kalıyor.
+
+## Şu ana kadar bilerek YOK olanlar
+
+- **Hiçbir yazma yolu** — `WMBD` sarmalayıcısı var ama hiç çağrılmıyor.
+  İlk yazma adım 3'te (`charge_control_end_threshold`) gelecek.
+- `platform_profile` girişi — adım 4 (K1 = a′: yalnız `0xED`)
+- Yazılabilir `pwm*` — duty yazmaçları inert (üç bağımsız kanıt)
+- Salt okunur `pwm*` bile yok — `FDTY`/`GDTY` gerçek duty'yi göstermiyor
+- `temp2` — `SKTC` ölü kanal, yük altında da 0 (yukarı bak)
+- `fan3`/`fan4` — donanımda iki fan var, dördüncüsü `aorus_laptop`'ın icadı
 - MMIO (K2 = B-ops: varsayılan kapalı; `raw_window` parametresi henüz **yok**,
   çünkü hiçbir şey yapmayan bir düğme koymak bu deponun kuralına aykırı)
 - `led_classdev` — `KBLL` ölü yazmaç (7 Eyl ölçümü)
-- Yazılabilir `pwm*` — duty yazmaçları inert (üç bağımsız kanıt)
 
 ## Çekirdek API notu — tasarım belgesinden sapma
 
