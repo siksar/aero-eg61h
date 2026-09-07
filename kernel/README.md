@@ -4,7 +4,7 @@ Gigabyte AERO X16 1VH (SKU **EG61VH**, BIOS FB0A, EC F00A) için WMI platform
 sürücüsü. Tasarım kararları `~/ecscope/docs/surucu-tasarim.md`'de, ölçüm tabanı
 `~/ecscope/docs/{yazma-ve-ic-uzay,firmware-8051,aero-x16-catalogue}.md`'de.
 
-## Durum: adım 4 tamam, adım 5 kısmen (7 Eyl 2026)
+## Durum: adım 5'e kadar tamam (7 Eyl 2026)
 
 | adım | ne | durum |
 |---|---|---|
@@ -12,7 +12,7 @@ sürücüsü. Tasarım kararları `~/ecscope/docs/surucu-tasarim.md`'de, ölçü
 | 2 | hwmon — salt okunur sıcaklık + fan | ✅ **doğrulandı** |
 | 3 | `charge_control_end_threshold` + uyanış kancası | ✅ **doğrulandı** |
 | 4 | Fan modu — beş mod, özel sysfs | ✅ **doğrulandı** |
-| 5 | `platform_profile` (yalnız `0xED`, K1 = a′) | ⚠️ **kısmen** — aşağı bak |
+| 5 | `platform_profile` (yalnız `0xED`, K1 = a′) | ✅ **doğrulandı** |
 | 6 | Olay kanalı + `sparse_keymap` doldurma | kısmen (log var, tablo yok) |
 | 7 | debugfs: eğri okuyucu, `EIDR` (`ECTE` denetimiyle) | bekliyor |
 
@@ -268,7 +268,7 @@ ara durum her zaman *daha soğuk* bir moda denk geliyor.
 > `fan_mode = 1` yazılıyken `balanced` (mod 4) koşuyor.
 > Plan: `~/aero-eg61h/docs/nixos-gecis.md` §2.
 
-## Adım 5 — `platform_profile` (7 Eyl 2026) ⚠️ SON DOĞRULAMA BEKLİYOR
+## Adım 5 — `platform_profile` (7 Eyl 2026) ✅
 
 ```
 /sys/class/platform-profile/platform-profile-1/   name = aero_eg61h
@@ -278,7 +278,7 @@ ara durum her zaman *daha soğuk* bir moda denk geliyor.
 
 Fan modu bu pakete **girmiyor** (K1 = a′) — o kendi sysfs'inde.
 
-### Doğrulanan (4 seçenekli sürümle, tam koşu)
+### Doğrulananlar
 
 | ne | sonuç |
 |---|---|
@@ -316,15 +316,28 @@ düğüm modül yüklenmeden önceki hâliyle bayt bayt aynı kalmalı. Bedeli:
 `0xED 3` `platform_profile`'dan erişilemiyor — kimse kullanmıyordu
 (`sched.nix` oyunda `0xED 2` yazıyor).
 
-### ⚠️ BEKLEYEN: birebir-aynılık doğrulaması
+### ✅ Birebir-aynılık doğrulandı (7 Eyl 2026)
 
-3 seçenekli sürüm **derlendi ama bu iddiayla yüklenip ölçülmedi**:
+`sudo bash scripts/verify-profile.sh`:
 
-```bash
-sudo bash scripts/verify-profile.sh
+```
+### modulsuz taban
+  legacy choices : low-power balanced performance
+### yeni modul yuklendi (kume = amd-pmf ile birebir)
+  legacy choices : low-power balanced performance
+  >> BIREBIR AYNI
+
+  low-power    -> legacy=low-power    amd-pmf=low-power    aero=low-power
+  performance  -> legacy=performance  amd-pmf=performance  aero=performance
+  balanced     -> legacy=balanced     amd-pmf=balanced     aero=balanced
+
+  balanced-performance YOK (dogru)
 ```
 
-`>> BIREBIR AYNI` yazarsa adım 5 kapanır. Yazmazsa tasarım yeniden açılır.
+**Adım 5 kapandı.** `/sys/firmware/acpi/platform_profile_choices` modül
+yüklenmeden önceki hâliyle birebir aynı — `low-power` yerinde, dolayısıyla
+`power-display.nix`'in pildeki `power-saver` otomatiği ve 4.28 W boşta bütçesi
+etkilenmiyor. Üç profil de her iki handler'a birlikte gidiyor.
 
 ### Bilinen yan etki: legacy `profile` geçici olarak `custom` okuyor
 
