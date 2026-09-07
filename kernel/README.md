@@ -261,6 +261,36 @@ ara durum her zaman *daha soğuk* bir moda denk geliyor.
   çünkü hiçbir şey yapmayan bir düğme koymak bu deponun kuralına aykırı)
 - `led_classdev` — `KBLL` ölü yazmaç (7 Eyl ölçümü)
 
+## Kaynak bağımsızlığı
+
+Bu sürücü `aorus_laptop` (`tangalbert919/gigabyte-laptop-wmi`) kaynağından
+**kod alınmadan** yazıldı. O projenin kaynağı bu makinede hiç bulunmadı ve
+okunmadı. Kod nereden geldi:
+
+| ne | kaynak |
+|---|---|
+| Dört WMI GUID'i | DSDT `_WDG` tamponu (`~/nixos-zixar/Documentation/aerox16/dsdt.dsl.txt` 8977-8989), baytları elle çözüldü |
+| Seçici değerleri | `~/ecscope/docs/aero-x16-catalogue.md` — her satır DSDT satır numarasıyla |
+| `_WED` / olay zinciri | DSDT 9721-9735 |
+| Fan modu desenleri, eğri tabloları | `~/ecscope/docs/firmware-8051.md` (EC firmware disassembly) + 6-7 Eyl canlı ölçümleri |
+| Çekirdek API kullanımı | `wmi.h`, `power_supply.h`, `hwmon.h`, `Module.symvers` |
+| Neyin sunulmayacağı | bu deponun kendi ölçümleri |
+
+**Bir yerde dolaylı bilgi kullanıldı, kayda geçmesi gerekiyor.**
+`~/nixos-zixar/system/arch/aerox16/wmi.nix`'in yorumları o projenin
+*davranışını* anlatıyor (upstream commit'leri, probe'unun
+`FAN_SILENT_MODE (0x57)` seçtiği). Bu ikinci elden bilgi, "aorus neden yanlış
+mod bildiriyor" sorusunun ilk açıklamasını kurmak için kullanıldı — ve o
+açıklama **yanlış çıktı**. Mekanizma 7 Eyl'de deneyle ölçüldü (yukarıda,
+adım 4 bölümü) ve doğrusu bulundu.
+
+Ders, deponun kendi kuralı: okumayla türetilen bir hüküm, bir şey koşulana
+kadar hüküm değildir.
+
+`aorus_laptop` bu depoda yalnız **iki** rolde geçiyor: karşı örnek (hangi
+hataları tekrarlamayacağımız), ve geliştirme sırasında ölçümlerin çapraz
+doğrulama referansı (hwmon değerleri yan yana okundu).
+
 ## Çekirdek API notu — tasarım belgesinden sapma
 
 `surucu-tasarim.md` §3.1 "probe'ta `wmi_find_device_by_guid()` + `wmidev_evaluate_method()`"
