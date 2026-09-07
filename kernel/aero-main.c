@@ -235,11 +235,18 @@ static void aero_core_attach(void)
 	ret = aero_battery_init(parent);
 	if (ret)
 		pr_warn("sarj limiti sunulamadi (%d)\n", ret);
+
+	ret = aero_profile_init(parent);
+	if (ret)
+		pr_warn("platform_profile kaydedilemedi (%d)\n", ret);
+	else
+		pr_info("platform_profile hazir: yalniz 0xED (fan modu ayri kol)\n");
 }
 
 
 static void aero_core_detach(void)
 {
+	aero_profile_exit();
 	aero_battery_exit();
 	aero_hwmon_exit();
 }

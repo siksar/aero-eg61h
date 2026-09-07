@@ -4,7 +4,7 @@ Gigabyte AERO X16 1VH (SKU **EG61VH**, BIOS FB0A, EC F00A) için WMI platform
 sürücüsü. Tasarım kararları `~/ecscope/docs/surucu-tasarim.md`'de, ölçüm tabanı
 `~/ecscope/docs/{yazma-ve-ic-uzay,firmware-8051,aero-x16-catalogue}.md`'de.
 
-## Durum: adım 4'e kadar tamam (7 Eyl 2026)
+## Durum: adım 4 tamam, adım 5 kısmen (7 Eyl 2026)
 
 | adım | ne | durum |
 |---|---|---|
@@ -12,7 +12,7 @@ sürücüsü. Tasarım kararları `~/ecscope/docs/surucu-tasarim.md`'de, ölçü
 | 2 | hwmon — salt okunur sıcaklık + fan | ✅ **doğrulandı** |
 | 3 | `charge_control_end_threshold` + uyanış kancası | ✅ **doğrulandı** |
 | 4 | Fan modu — beş mod, özel sysfs | ✅ **doğrulandı** |
-| 5 | `platform_profile` (yalnız `0xED`, K1 = a′) | sırada |
+| 5 | `platform_profile` (yalnız `0xED`, K1 = a′) | ⚠️ **kısmen** — aşağı bak |
 | 6 | Olay kanalı + `sparse_keymap` doldurma | kısmen (log var, tablo yok) |
 | 7 | debugfs: eğri okuyucu, `EIDR` (`ECTE` denetimiyle) | bekliyor |
 
@@ -42,6 +42,7 @@ aero-main.c     WMI baglanma, WMBC/WMBD sarmalayicilari, DMI + cakisma kapilari
 aero-hwmon.c    hwmon — TAMAMI SALT OKUNUR
 aero-battery.c  sarj limiti — standart power_supply ABI'si + uyanis kancasi
 aero-fan.c      fan modu — bes desen, dort secicilik yazma dizisi
+aero-profile.c  platform_profile — YALNIZ 0xED (fan modu ayri kol)
 Makefile        aero-eg61h-y := aero-main.o aero-hwmon.o aero-battery.o aero-fan.o
 build.sh        arac zincirini ~/nixos-zixar flake'inden ceker
 ```
@@ -267,9 +268,89 @@ ara durum her zaman *daha soğuk* bir moda denk geliyor.
 > `fan_mode = 1` yazılıyken `balanced` (mod 4) koşuyor.
 > Plan: `~/aero-eg61h/docs/nixos-gecis.md` §2.
 
+## Adım 5 — `platform_profile` (7 Eyl 2026) ⚠️ SON DOĞRULAMA BEKLİYOR
+
+```
+/sys/class/platform-profile/platform-profile-1/   name = aero_eg61h
+    profile    low-power | balanced | performance      OKU + YAZ
+    choices    (amd-pmf'inkiyle BİREBİR AYNI)          salt okunur
+```
+
+Fan modu bu pakete **girmiyor** (K1 = a′) — o kendi sysfs'inde.
+
+### Doğrulanan (4 seçenekli sürümle, tam koşu)
+
+| ne | sonuç |
+|---|---|
+| Kayıt | ✅ `platform-profile-1`, `name = aero_eg61h` |
+| Dört profil yazma + geri okuma | ✅ hepsi |
+| `max-power` (sunulmayan) | ✅ reddedildi |
+| Legacy düğümden yazma | ✅ **her iki handler'a** gidiyor (`amd-pmf` ve biz) |
+| `powerprofilesctl` zinciri | ✅ sürüyor |
+| Üst-küme kısıtı gerçek mi | ✅ **deneyle kanıtlandı** (aşağı bak) |
+
+### Ölçümle düzelen iki hüküm
+
+**1. Legacy düğüm "kesişim" DEĞİL.** Tasarım belgesi seçeneklerin
+handler'ların kesişimine düştüğünü söylüyordu. Ayırt edici deney — kümemizden
+`low-power` geçici olarak çıkarıldı:
+
+| koşu | `amd-pmf` | `aero` | legacy |
+|---|---|---|---|
+| A (üst küme) | `lp b p` | `lp b bp p` | `lp b bp p` |
+| B (`lp` yok) | `lp b p` | `b bp p` | `b bp p` |
+
+Kesişim olsaydı B'de `balanced-performance` de düşerdi — düşmedi. **Legacy her
+iki koşuda tam olarak bizim kümemizi gösterdi.** Ama sonuç aynı kapıya çıkıyor:
+kümemizden `low-power` çıkarsa legacy'den de kayboluyor, yani üst-küme kısıtı
+**gerçekten load-bearing** — artık varsayım değil, ölçüm.
+
+**2. Fazladan seçenek `amd-pmf`'e sızıyor.** Legacy'ye `balanced-performance`
+yazıldı (yalnız biz sunuyorduk): **kabul edildi**, ve `amd-pmf` kendi
+`choices`'inde olmamasına rağmen `profile = balanced-performance` okudu. SMU
+tarafında ne yaptığı **ölçülmedi**.
+
+→ Bu yüzden `balanced-performance` **düşürüldü**. Küme artık `amd-pmf`'inkiyle
+birebir aynı (`low-power balanced performance` → `0xED` `0/1/2`), yani legacy
+düğüm modül yüklenmeden önceki hâliyle bayt bayt aynı kalmalı. Bedeli:
+`0xED 3` `platform_profile`'dan erişilemiyor — kimse kullanmıyordu
+(`sched.nix` oyunda `0xED 2` yazıyor).
+
+### ⚠️ BEKLEYEN: birebir-aynılık doğrulaması
+
+3 seçenekli sürüm **derlendi ama bu iddiayla yüklenip ölçülmedi**:
+
+```bash
+sudo bash scripts/verify-profile.sh
+```
+
+`>> BIREBIR AYNI` yazarsa adım 5 kapanır. Yazmazsa tasarım yeniden açılır.
+
+### Bilinen yan etki: legacy `profile` geçici olarak `custom` okuyor
+
+Modül yüklenir yüklenmez `/sys/firmware/acpi/platform_profile` `balanced`
+yerine `custom` okumaya başlıyor — çünkü iki handler farklı şey söylüyor ve
+bizimki dürüstçe "bilmiyorum" diyor (`WMBC`'de `0xED` okuması yok, aşağı bak).
+İlk profil yazımında çözülüyor; pratikte `power-display.nix`'in ilk AC/BAT
+geçişi bunu yapar. Uydurma bir değer döndürmek `aorus_laptop`'ın hatası olurdu.
+
+### `0xED` geri okunamıyor — tek doğrulanamayan yazım
+
+`WMBC`'de `0xED` karşılığı **yok** (DSDT 9525-9720 tarandı): EC aktif
+performans profilini geri vermiyor. Sürücünün başka her yazması geri okumayla
+doğrulanıyor; bu tek istisna, gizlenmiyor, ve `profile_get` yalnız bizim
+yazdığımızı hatırlayabiliyor.
+
+### Açık iş: eşleme canlı ölçülmedi
+
+`low-power/balanced/performance → 0xED 0/1/2` eşlemesi DSDT 9200-9336'nın
+**statik çözümlemesinden** geliyor (her modun ATPP/ACBT/PL1-3 yazımları).
+"ASL ne yazıyor" ile "donanım ne yapıyor" aynı şey değil — yük altında paket
+gücü + dGPU bütçesi ölçülerek doğrulanmalı.
+
+
 ## Şu ana kadar bilerek YOK olanlar
 
-- `platform_profile` girişi — adım 5 (K1 = a′: yalnız `0xED`)
 - `charge_mode` (`WMBD 0x64`, BCPS) — anlamı DSDT'den doğrulanamıyor, standart
   karşılığı yok. Geçiş için `acpi_call` ile kapanıyor (`docs/nixos-gecis.md` §3)
 - Fan hızı/duty kaydırıcısı — bu firmware'de fan hızı ayarlanamıyor, yalnız

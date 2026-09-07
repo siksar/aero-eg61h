@@ -3,7 +3,7 @@
 > 7 Eylül 2026 · Gigabyte AERO X16 1VH (SKU EG61VH) · BIOS FB0A / EC F00A
 > Masaüstü: **COSMIC** (System76) · NixOS · çekirdek 7.2.2-cachyos-lto
 >
-> **Durum: adım 4'e kadar yazıldı ve doğrulandı** (§10) — sürücü artık fan modunu
+> **Durum: adım 4'e kadar doğrulandı, adım 5 kısmen** (§10) — sürücü artık fan modunu
 > ve şarj limitini yazabiliyor. `aorus_laptop`'a geçiş planı: `docs/nixos-gecis.md`.
 > Kararların tamamı §12'de; sürücü kararları (K1-K5) 7 Eyl'de kapandı.
 
@@ -365,7 +365,7 @@ Her adım tek başına çalışır ve tek başına doğrulanır.
 | 2 | **hwmon** — 1 sıcaklık + 2 fan, salt okunur (SKTC ölü çıktı) | yük altında CPU 45→91 °C, fanlar 0→3400 rpm | ✅ **7 Eyl 2026** |
 | 3 | **`charge_control_end_threshold`** + uyanış kancası | 60→80→45→60 geri okumayla eşleşti; kanca uyanışta tetiklendi | ✅ **7 Eyl 2026** |
 | 4 | **Fan modu** — beş mod, özel sysfs (K1 = a′: `platform_profile`'a girmez) | turbo boşta fanları 0→7000 rpm'e çıkardı | ✅ **7 Eyl 2026** |
-| 5 | **`platform_profile`** — yalnız `0xED` | PPD + `power-display.nix` etkileşimi ölçülür | sırada |
+| 5 | **`platform_profile`** — yalnız `0xED` | dört profil yazıldı, legacy yazımı iki handler'a gidiyor; birebir-aynılık doğrulaması BEKLİYOR | ⚠️ **kısmen** |
 | 6 | **Daemon** — D-Bus arayüzü + polkit, sürücüsüz `degraded` kipi dahil | `busctl` ile elle çağırma | |
 | 7 | **GUI iskeleti** — `nav_bar` + 7 panel, hepsi salt okunur | tema COSMIC ile uyumlu, gece/gündüz çalışıyor | |
 | 8 | **Basit menü** — 5 ön ayar + 1 kaydırıcı | ön ayara basınca `fan_mode` gerçekten değişiyor | |
@@ -623,3 +623,39 @@ artık ölçüldü (Ölçüm 7).
 **Hüküm "ölçüldü" → "tekrarlanmadı" oldu.** Kanca kalıyor: bedeli bir okuma
 ve gerçekten geri alınan bir durum olursa yakalıyor — ama kanıtlanmış bir
 gereklilik olarak sunulmuyor.
+
+### ⚠️ Ölçüm 9 — `platform_profile` legacy düğüm davranışı — **KISMEN, 7 Eyl 2026**
+
+Adım 5'in tek riski şuydu: ikinci bir handler kaydetmek
+`/sys/firmware/acpi/platform_profile_choices`'i daraltıp `low-power`'ı
+düşürür mü? Düşürürse `power-display.nix`'in pildeki `power-saver` otomatiği
+kırılır ve 4.28 W boşta bütçesi vurulur.
+
+**Ayırt edici deney** (kümemizden `low-power` geçici çıkarıldı):
+
+| koşu | `amd-pmf` | `aero` | legacy |
+|---|---|---|---|
+| A (üst küme) | `lp b p` | `lp b bp p` | `lp b bp p` |
+| B (`lp` yok) | `lp b p` | `b bp p` | `b bp p` |
+
+**İki hüküm düzeldi:**
+
+1. **Legacy "kesişim" değil.** Kesişim olsaydı B'de `balanced-performance` de
+   düşerdi. Legacy her iki koşuda tam olarak *bizim* kümemizi gösterdi.
+   Ama sonuç aynı: kümemizden `low-power` çıkarsa legacy'den de kayboluyor →
+   **üst-küme kısıtı gerçekten load-bearing**, artık ölçülmüş.
+2. **Fazladan seçenek `amd-pmf`'e sızıyor.** Legacy'ye `balanced-performance`
+   yazıldı: kabul edildi, ve `amd-pmf` kendi `choices`'inde olmamasına rağmen
+   onu `profile` olarak okudu. SMU tarafında ne yaptığı ölçülmedi.
+   → `balanced-performance` **düşürüldü**; küme artık `amd-pmf`'inkiyle birebir.
+
+**Ayrıca doğrulandı:** dört profil de yazılıp geri okundu, `max-power`
+reddedildi, legacy yazımı **her iki handler'a** gidiyor, `powerprofilesctl`
+zinciri sürüyor.
+
+**Bekleyen:** 3 seçenekli sürümle legacy düğümün modülsüz hâle **birebir aynı**
+kaldığının doğrulanması — `sudo bash scripts/verify-profile.sh`.
+
+**Yan etki (kabul edildi):** modül yüklenince legacy `profile` geçici olarak
+`custom` okuyor, çünkü `WMBC`'de `0xED` okuması yok ve sürücü "bilmiyorum"
+demeyi uydurmaya tercih ediyor. İlk profil yazımında çözülüyor.

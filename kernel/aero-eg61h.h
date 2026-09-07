@@ -178,4 +178,8 @@ int __aero_fan_read_pattern(u8 *pattern);	/* çağıran io_lock'u tutmalı */
 const char *aero_fan_mode_name(u8 pattern);
 extern const struct attribute_group *aero_wmbd_groups[];
 
+/* platform_profile (aero-profile.c) — YALNIZ 0xED taşır (K1 = a′) */
+int aero_profile_init(struct device *parent);
+void aero_profile_exit(void);
+
 #endif /* _AERO_EG61H_H */
