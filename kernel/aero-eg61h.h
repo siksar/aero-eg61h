@@ -168,4 +168,14 @@ int __aero_ec_write(u8 selector, u32 value);
 int aero_hwmon_init(struct device *parent);
 void aero_hwmon_exit(void);
 
+/* pil katmanı (aero-battery.c) — şarj limiti, standart power_supply ABI'si */
+int aero_battery_init(struct device *parent);
+void aero_battery_exit(void);
+void aero_battery_resume(void);
+
+/* fan modu (aero-fan.c) — özel sysfs; platform_profile'a GİRMEZ (K1 = a′) */
+int __aero_fan_read_pattern(u8 *pattern);	/* çağıran io_lock'u tutmalı */
+const char *aero_fan_mode_name(u8 pattern);
+extern const struct attribute_group *aero_wmbd_groups[];
+
 #endif /* _AERO_EG61H_H */

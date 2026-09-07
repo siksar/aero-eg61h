@@ -26,6 +26,7 @@
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/platform_device.h>
+#include <linux/pm.h>
 #include <linux/slab.h>
 #include <linux/wmi.h>
 
@@ -184,48 +185,6 @@ void aero_ec_unlock(void)
  * ------------------------------------------------------------------------- */
 
 /*
- * PECM+0x2C'nin dört bitini ayrı ayrı okuyup deseni geri kuruyor.
- * 0x2C tek bir WMBC seçicisiyle bütün olarak okunamıyor; dört bit dört ayrı
- * seçicide (0x57 CRAF bit0, 0x71 FANB bit1, 0x67 TENF bit2, 0x6A ADJF bit3).
- */
-static int aero_read_fan_pattern(u8 *pattern)
-{
-	static const u8 sel[4] = {
-		AERO_RD_FAN_CRAF, AERO_RD_FAN_FANB,
-		AERO_RD_FAN_TENF, AERO_RD_FAN_ADJF,
-	};
-	u8 val = 0;
-	int i, ret;
-
-	lockdep_assert_held(&aero.io_lock);
-
-	for (i = 0; i < 4; i++) {
-		u32 bit;
-
-		ret = __aero_ec_read(sel[i], 0, &bit);
-		if (ret)
-			return ret;
-
-		val |= (bit & 1) << i;
-	}
-
-	*pattern = val;
-	return 0;
-}
-
-static const char *aero_fan_mode_name(u8 pattern)
-{
-	switch (pattern) {
-	case AERO_FAN_MODE_DEFAULT:	return "mod0/varsayilan";
-	case AERO_FAN_MODE_QUIET:	return "sessiz";
-	case AERO_FAN_MODE_GAMING:	return "gaming";
-	case AERO_FAN_MODE_MODE4:	return "mod4";
-	case AERO_FAN_MODE_TURBO:	return "turbo";
-	default:			return "tanimsiz-desen";
-	}
-}
-
-/*
  * Bağlanma kanıtı + üst katmanların kurulması.
  *
  * Kanıt okuması tek seferlik — probe anında, bir kez. YOKLAMA DEĞİL: bu sürücü
@@ -249,7 +208,7 @@ static void aero_core_attach(void)
 	if (!ret)
 		ret = __aero_ec_read(AERO_RD_FAN2_RPM, 0, &rpm2);
 	if (!ret)
-		ret = aero_read_fan_pattern(&pattern);
+		ret = __aero_fan_read_pattern(&pattern);
 	aero_ec_unlock();
 
 	if (ret) {
@@ -272,10 +231,16 @@ static void aero_core_attach(void)
 		pr_warn("hwmon kaydedilemedi (%d) — sensor kanallari yok\n", ret);
 	else
 		pr_info("hwmon hazir: temp1 (CPU), fan1, fan2 — salt okunur\n");
+
+	ret = aero_battery_init(parent);
+	if (ret)
+		pr_warn("sarj limiti sunulamadi (%d)\n", ret);
 }
+
 
 static void aero_core_detach(void)
 {
+	aero_battery_exit();
 	aero_hwmon_exit();
 }
 
@@ -448,6 +413,25 @@ static void aero_event_notify(struct wmi_device *wdev,
 	dev_info(&wdev->dev, "EC olayi: no=0x%02x durum=0x%02x\n", ev[0], ev[1]);
 }
 
+/*
+ * Uyanış kancası. EC şarj limitini uyanışta geri alıyor (6 Eyl ölçümü), yani
+ * ayarın kalıcı olması TAM OLARAK buradan geliyor.
+ *
+ * NOT: bu geri çağrının gerçekten çalıştığı, uyanış logundaki "uyanis: ..."
+ * satırıyla DOĞRULANMALI. PM çekirdeği sürücünün pm ops'unu yalnız bus kendi
+ * bir geri çağrı sunmadığında çağırıyor; WMI bus'ın pm ops'u bu çekirdekte
+ * incelenemedi (dev çıktısında drivers/ yok). Satır görünmezse yol
+ * register_pm_notifier(PM_POST_SUSPEND) olarak değişecek — orası bus'tan
+ * bağımsız.
+ */
+static int aero_resume(struct device *dev)
+{
+	aero_battery_resume();
+	return 0;
+}
+
+static DEFINE_SIMPLE_DEV_PM_OPS(aero_pm_ops, NULL, aero_resume);
+
 static const struct wmi_device_id aero_wmbd_id_table[] = {
 	{ AERO_WMI_GUID_WMBD, NULL },
 	{ }
@@ -466,6 +450,9 @@ static const struct wmi_device_id aero_event_id_table[] = {
 static struct wmi_driver aero_wmbd_driver = {
 	.driver = {
 		.name = "aero_eg61h",
+		.pm   = pm_sleep_ptr(&aero_pm_ops),
+		/* fan_mode + fan_mode_choices bu cihazın altında görünür */
+		.dev_groups = aero_wmbd_groups,
 	},
 	.id_table = aero_wmbd_id_table,
 	.probe = aero_wmbd_probe,
