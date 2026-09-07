@@ -1,0 +1,561 @@
+diff --git a/MAINTAINERS b/MAINTAINERS
+index 46c2b04..183f966 100644
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -50,14 +50,32 @@ W:	Modül ÇEKİRDEĞİN araç zinciriyle derlenmeli: kernel.stdenv +
+ 	"gcc: error: unrecognized command-line option '-mstack-alignment=8'"
+ 	(ayrıca -mretpoline-external-thunk, -fsplit-lto-unit). Doğru desen
+ 	nixpkgs'in kendi acpi_call'ında: pkgs/os-specific/linux/acpi-call.
+-	Doğrulama: modinfo aorus-laptop.ko → vermagic 7.2.2-cachyos-lto.
+-N:	Çalışan kollar: 0xED perf profili (GPU 38W→70-83W ölçüldü),
+-	ACBT 0x4C Dynamic Boost bütçesi, fan_mode 0x57 sessiz mod (yamalı probe).
+-N:	AC fan varsayılanı 1 (sessiz), 16 Ağu 2026'da 4'ten alındı — DÖRT MODUN DA
+-	ÖLÇÜLMESİNDEN sonra (tablo: wmi-ec.md "Fan modu ölçümü"). SUPER+M döngüsü
+-	yine 4→1→2→5. Elle `echo N > fan_mode` KALICI DEĞİLDİR —
+-	gigabyte-power-profile.service fiş/uyku olayında yeniden yazar; kalıcılık
+-	yalnız o servisin FAN= satırından gelir.
++	Doğrulama: modinfo aero-eg61h.ko → vermagic 7.2.2-cachyos-lto.
++N:	SÜRÜCÜ DEĞİŞTİ 7 Eyl 2026: aorus-laptop BIRAKILDI, yerine kendi
++	sürücümüz aero_eg61h (~/aero-eg61h, NixOS modülü nix/aero-eg61h.nix).
++	Sunduğu: hwmon (1 sıcaklık + 2 fan, salt okunur), fan_mode (5 mod,
++	isimle), charge_control_end_threshold (standart ABI), platform_profile
++	(yalnız 0xED). Yazdığı her şeyi GERİ OKUYUP doğruluyor.
++W:	aorus-laptop'ın fan_mode NUMARALARI PECM+0x2C DESENLERİNE EŞLENMİYOR —
++	7 Eyl'de bit bit ölçüldü. O sürücü b0/b1/b2'yi birbirini dışlayan grup
++	olarak yönetiyor ama b3'ü (ADJF) desenin parçası saymıyor; fan_mode=4
++	bir mod değil, "ADJF'yi kapat". Sonuç: bu makine AYLARDIR "fan_mode=1
++	(sessiz)" yazılıyken aslında mod 4 (balanced) koşuyordu, ve Süper+M
++	döngüsü ADJF'yi sıfırladıktan sonra game-perf'in turbo'su TANINMAYAN
++	bir desene düşüp sessizce çalışmıyordu. Tam tablo:
++	~/aero-eg61h/docs/nixos-gecis.md §2.
++W:	16 Ağu 2026 fan modu ölçüm tablosu (wmi-ec.md) ARTIK ŞÜPHELİ: aorus
++	numaralandırmasıyla alındı, hangi 0x2C desenini ölçtüğü ADJF geçmişine
++	bağlı ve belirsiz. Yeni isimlerle (quiet/balanced/responsive/gaming/
++	turbo) YENİDEN ÖLÇÜLMELİ.
++N:	Çalışan kollar: 0xED perf profili (GPU 38W→70-83W ölçüldü) artık
++	platform_profile üzerinden, ACBT 0x4C Dynamic Boost bütçesi hâlâ
++	acpi_call ile, fan_mode beş desenin beşi de yazılabiliyor.
++N:	AC ve pil varsayılanı "balanced" (PECM+0x2C = 0x09) — makinenin zaten
++	koştuğu mod bu, "quiet" yazmak davranışı DEĞİŞTİRİR. SUPER+M döngüsü
++	artık isimle: balanced→quiet→gaming→turbo. Elle `echo X > fan_mode`
++	KALICI DEĞİLDİR — aero-power-profile.service fiş/uyku olayında yeniden
++	yazar; kalıcılık hardware.aero-eg61h.fanMode.* seçeneklerinden gelir.
+ W:	FAN SEÇERKEN "hangisi daha serin" DİYE SORMA — boost Tjmax'i hedefliyor.
+ 	Mod 4→5'te hava %45 artıyor, sıcaklık 1.1°C düşüyor; kazanç güce ve saate
+ 	gidiyor. Sürekli yükteki ~99°C fanla çözülmez. Tek istisna mod 1: fan
+@@ -108,10 +126,10 @@ W:	powertop --auto-tune SENİN AYARLARINI EZER (16 Ağu 2026 ölçümü).
+ 	sysctl/USB ayarı eklerken powertop'un onu da ezip ezmediğini KONTROL ET,
+ 	eziyorsa oraya ekle. udev kuralı tek başına yetmez: yalnız yeniden
+ 	enumere olan cihazı kurtarır, dahili klavye hiç yeniden enumere olmaz.
+-W:	Ağaç-dışı modül (aorus-laptop) güncellemesi REBOOT ister. `modprobe -r`
++W:	Ağaç-dışı modül (aero-eg61h) güncellemesi REBOOT ister. `modprobe -r`
+ 	+ `modprobe` YETMEZ: modprobe /run/booted-system/kernel-modules altına
+ 	bakar, switch orayı değiştirmez (16 Ağu'da denendi, eski modül döndü).
+-	Doğrulama: /sys/module/aorus_laptop/srcversion + dmesg imza satırı.
++	Doğrulama: /sys/module/aero_eg61h/srcversion + dmesg imza satırı.
+ W:	Ayarın uygulandığını sysfs'ten OKUYARAK doğrula, dosyada yazıyor diye
+ 	uygulandığını varsayma. 16 Ağu'da iki ayarın hiç çalışmadığı bulundu:
+ 	"amdgpu.gfx_off=1" diye bir parametre YOK (kernel: "unknown parameter
+diff --git a/flake.lock b/flake.lock
+index fbb142f..f18e845 100644
+--- a/flake.lock
++++ b/flake.lock
+@@ -1,5 +1,21 @@
+ {
+   "nodes": {
++    "aero-eg61h": {
++      "flake": false,
++      "locked": {
++        "lastModified": 1788813539,
++        "narHash": "sha256-7GcyEBkXUjKIjbDuAjlYOkWoU/kqDPqs8J0LA8HyuYw=",
++        "ref": "refs/heads/master",
++        "rev": "85acce074ceb0d65610da62600f6eee80dfb0992",
++        "revCount": 11,
++        "type": "git",
++        "url": "file:///home/zixar/aero-eg61h"
++      },
++      "original": {
++        "type": "git",
++        "url": "file:///home/zixar/aero-eg61h"
++      }
++    },
+     "base16": {
+       "inputs": {
+         "fromYaml": "fromYaml"
+@@ -668,6 +684,7 @@
+     },
+     "root": {
+       "inputs": {
++        "aero-eg61h": "aero-eg61h",
+         "cachyos-kernel": "cachyos-kernel",
+         "caelestia-cli": "caelestia-cli",
+         "caelestia-shell": "caelestia-shell_2",
+diff --git a/flake.nix b/flake.nix
+index 0099475..e7de357 100644
+--- a/flake.nix
++++ b/flake.nix
+@@ -80,6 +80,19 @@
+       # nixpkgs'teki pkgs.quickshell 0.3.0'a düşürmek QML "Type X unavailable" çökmesi
+       # verir; ayrı kalması bilinçli, Caelestia'nın kendi tasarımı.
+     };
++    # aero_eg61h — bu makinenin KENDİ WMI/platform sürücüsü + NixOS modülü.
++    # `aorus-laptop`'ın yerini aldı (7 Eyl 2026): o sürücü ölçülmüş üç hata
++    # taşıyordu (yazılabilir ama etkisiz pwm, sabit-sıfır temp2/temp3, ve
++    # PECM+0x2C'ye eksik yazım yüzünden yanlış fan modu). Gerekçe ve ölçümler:
++    # ~/aero-eg61h/docs/nixos-gecis.md
++    #
++    # flake = false: depo bir flake değil, modül dosya yoluyla import ediliyor.
++    # Yerel git deposu; rev flake.lock'ta pinli, `nix flake update aero-eg61h`
++    # ile bilerek güncellenir.
++    aero-eg61h = {
++      url = "git+file:///home/zixar/aero-eg61h";
++      flake = false;
++    };
+   };
+ 
+   outputs = inputs @ { nixpkgs, home-manager, stylix, ... }:
+diff --git a/home/desktop/CLAUDE.md b/home/desktop/CLAUDE.md
+index f1423a5..b5bca8d 100644
+--- a/home/desktop/CLAUDE.md
++++ b/home/desktop/CLAUDE.md
+@@ -51,7 +51,7 @@ build order (harmless: same set, different `extra-dependencies`/`.manpath` order
+   `// Plugin support is not wired up yet` comment in the shell's own source — a bar
+   module cannot be added without patching the QML. This is why the fan-mode indicator
+   that used to live in waybar's `custom/fan` is gone; the `notify-send` toast
+-  `fan-mode-cycle.service` already sends (`system/arch/aerox16/wmi.nix`) is the whole
++  `aero-fan-cycle.service` already sends (`system/arch/aerox16/wmi.nix`) is the whole
+   UI now.
+ - **Custom color schemes are package-only, still.** `caelestia scheme set -n <name>`
+   resolves only against `caelestia-cli`'s packaged `src/caelestia/data/schemes/`
+@@ -141,7 +141,7 @@ apply to this rice's Caelestia cutover itself (that was an add+delete, not a mov
+ rice, the author's personal dotfiles — no `flake.nix`, on the author's own machine runs
+ out of store via `mkOutOfStoreSymlink "/etc/nixos/…"` + `rsync`) to commit
+ `5d4451f7ab55ddaced9ba350b6dba5dd2932aeb1`, applies a handful of patches (swww→awww
+-rename, missing/broken upstream autostart lines, missing keybinds for fan-mode-cycle and
++rename, missing/broken upstream autostart lines, missing keybinds for aero-fan-cycle and
+ keyboard-RGB brightness), and installs it as a **third, quarantined** greeter session entry.
+ The existing Caelestia session (`defaultSession` still `hyprland-uwsm`) is not touched by
+ a single line.
+@@ -174,7 +174,7 @@ session-scoped config file instead.
+ ### What was and wasn't adapted
+ 
+ Adapted from upstream: `hyprpolkitagent` autostart (upstream's own polkit line was
+-broken/missing), the fan-mode-cycle keybind, the keyboard-RGB brightness keybind, the
++broken/missing), the aero-fan-cycle keybind, the keyboard-RGB brightness keybind, the
+ EGL/vendor-library pins (same dGPU-safety concern as Caelestia's — see `AQ_DRM_DEVICES`
+ note above), and the swww→awww rename (upstream's wallpaper daemon call target changed
+ name upstream, unrelated to this repo).
+diff --git a/home/desktop/serpantinum/default.nix b/home/desktop/serpantinum/default.nix
+index 8ed7f19..90afb85 100644
+--- a/home/desktop/serpantinum/default.nix
++++ b/home/desktop/serpantinum/default.nix
+@@ -101,7 +101,7 @@ let
+       # doğrulandı). $mainMod+1 de dolu (çalışma alanı 1). Q'nun bir sıra altı, aynı
+       # sütun — $mainMod+A — boş, oraya kondu.
+       printf '%s\n' \
+-        'bind = $mainMod ALT, M, exec, systemctl start --no-block fan-mode-cycle.service' \
++        'bind = $mainMod ALT, M, exec, systemctl start --no-block aero-fan-cycle.service' \
+         'bind = $mainMod ALT, C, exec, kbd-rgb bright -10' \
+         'bind = $mainMod ALT, V, exec, kbd-rgb bright +10' \
+         'bind = $mainMod, A, killactive,' \
+diff --git a/home/desktop/wm/binds.lua b/home/desktop/wm/binds.lua
+index 67acc56..9ceb7f1 100644
+--- a/home/desktop/wm/binds.lua
++++ b/home/desktop/wm/binds.lua
+@@ -55,7 +55,7 @@ hl.bind(mod .. " + SHIFT + N", hl.dsp.exec_cmd("caelestia shell drawers toggle s
+ -- Fan modu döngüsü 4→1→2→5 — polkit kuralı şifresiz izin verir
+ -- (bkz. system/arch/aerox16/wmi.nix; Fn+F7 EC'de yutulduğu için OS
+ -- tarafında SUPER+M kullanılıyor)
+-hl.bind(mod .. " + M", hl.dsp.exec_cmd("systemctl start --no-block fan-mode-cycle.service"))
++hl.bind(mod .. " + M", hl.dsp.exec_cmd("systemctl start --no-block aero-fan-cycle.service"))
+ 
+ -- Klavye aydınlatması (HID LampArray — bkz. system/drivers/input/keyboard-rgb/).
+ -- Renk normalde Caelestia'nın tema motorundan gelir (postHook →
+diff --git a/scripts/diag-game.sh b/scripts/diag-game.sh
+index 1d74ac7..4fc4693 100644
+--- a/scripts/diag-game.sh
++++ b/scripts/diag-game.sh
+@@ -35,7 +35,7 @@ say "2) PERF ZİNCİRİ  (gamerun bunu sürer — yoksa dGPU bütçesi düşük
+ val "game-perf.service" "$(systemctl is-active game-perf.service 2>&1)"
+ val "scx.service" "$(systemctl is-active scx.service 2>&1)"
+ val "sched_ext durumu" "$(rd /sys/kernel/sched_ext/state)  $(rd /sys/kernel/sched_ext/root/ops)"
+-val "fan_mode" "$(rd /sys/devices/platform/aorus_laptop/fan_mode)  (5 = turbo, oyunda beklenen)"
++val "fan_mode" "$(rd $(echo /sys/bus/wmi/devices/ABBC0F75-*/fan_mode))  (turbo, oyunda beklenen)"
+ 
+ say "3) CPU MASKESİ  (cores.nix Zen5c'ye kilitler; oyun 0-15 görmeli)"
+ FOUND=0
+diff --git a/scripts/idle-baseline.sh b/scripts/idle-baseline.sh
+index 99ebdc1..a76c6ba 100755
+--- a/scripts/idle-baseline.sh
++++ b/scripts/idle-baseline.sh
+@@ -35,7 +35,7 @@ echo "oturum     : ${XDG_SESSION_DESKTOP:-?} / ${XDG_CURRENT_DESKTOP:-?}"
+ echo "AC online  : $(cat /sys/class/power_supply/ACAD/online)"
+ echo "parlaklık  : $(cat /sys/class/backlight/amdgpu_bl1/brightness)/$(cat /sys/class/backlight/amdgpu_bl1/max_brightness)"
+ echo "profil     : $(cat /sys/firmware/acpi/platform_profile) / $(cat /sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference)"
+-echo "fan_mode   : $(cat /sys/devices/platform/aorus_laptop/fan_mode 2>/dev/null || echo -)"
++echo "fan_mode   : $(cat $(echo /sys/bus/wmi/devices/ABBC0F75-*/fan_mode) 2>/dev/null || echo -)"
+ echo "fork/s     : $(( (fork1-fork0) / 60 ))"
+ echo "gpu_busy   : $(( gpu_s / gpu_n ))%"
+ echo "psr_res    : $(cat $P 2>/dev/null || echo '(root gerek)')"
+diff --git a/scripts/tclt-probe.sh b/scripts/tclt-probe.sh
+index babd295..b4be6e2 100644
+--- a/scripts/tclt-probe.sh
++++ b/scripts/tclt-probe.sh
+@@ -33,7 +33,7 @@ mkdir -p "$OUT"
+ AC=$(cat /sys/class/power_supply/ACAD/online)
+ [ "$AC" = "1" ] || { echo "HATA: AC bagli degil (ACAD/online=$AC). Fisi tak, tekrar dene."; exit 1; }
+ 
+-FANMODE=$(cat /sys/devices/platform/aorus_laptop/fan_mode 2>/dev/null || echo "?")
++FANMODE=$(cat $(echo /sys/bus/wmi/devices/ABBC0F75-*/fan_mode) 2>/dev/null || echo "?")
+ echo "on kosul: AC=1, fan_mode=$FANMODE (olcum boyunca sabit kalmali)"
+ 
+ K=""; A=""
+@@ -41,10 +41,10 @@ for h in /sys/class/hwmon/hwmon*; do
+   n=$(cat "$h/name" 2>/dev/null) || continue
+   [ "$n" = "k10temp" ] && K="$h"
+   [ "$n" = "amdgpu" ]  && A="$h"
+-  [ "$n" = "aorus_laptop" ] && AO="$h"
++  [ "$n" = "aero_eg61h" ] && AO="$h"
+ done
+ [ -n "$K" ] && [ -n "$A" ] || { echo "HATA: k10temp/amdgpu hwmon bulunamadi."; exit 1; }
+-echo "hwmon: k10temp=$K amdgpu=$A aorus=${AO:-yok}"
++echo "hwmon: k10temp=$K amdgpu=$A aero=${AO:-yok}"
+ 
+ [ -n "$BURN" ] && [ -x "$BURN" ] || { echo "HATA: BURN=<avx512 yuk ikilisi> verilmeli."; exit 1; }
+ 
+@@ -86,7 +86,7 @@ cleanup() {
+     echo "  frekans tavani geri: $(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq) (orijinal $CAP_ORIG)"
+   fi
+   echo "  EC TCLT@0x8C = $(read_tclt)  (EC'nin kendi degeri; 95 olmali)"
+-  echo "  fan_mode = $(cat /sys/devices/platform/aorus_laptop/fan_mode 2>/dev/null)"
++  echo "  fan_mode = $(cat $(echo /sys/bus/wmi/devices/ABBC0F75-*/fan_mode) 2>/dev/null)"
+ }
+ trap cleanup EXIT INT TERM
+ 
+diff --git a/system/arch/aerox16/wmi.nix b/system/arch/aerox16/wmi.nix
+index 1ae076b..72a3fcd 100644
+--- a/system/arch/aerox16/wmi.nix
++++ b/system/arch/aerox16/wmi.nix
+@@ -1,75 +1,67 @@
+-# Gigabyte WMI/EC — ağaç-dışı aorus-laptop modülü + acpi_call ile ham EC yazımı.
+-# Fan eğrisi, sessiz mod, 0xED perf profili, ACBT dGPU boost bütçesi.
++# Gigabyte WMI/EC — KENDİ sürücümüz (aero_eg61h) + acpi_call ile ham EC yazımı.
++# Fan modu, şarj limiti, 0xED perf profili, ACBT dGPU boost bütçesi.
+ # DSDT/EC sürümüne bağlı, elle tersine mühendislik: Documentation/aerox16/wmi-ec.md
+ # UYARI: 0x4B ve 0xF1-F3 EC tarafından geri yazılıyor — denemeyin (31 Tem).
+-{ config, pkgs, ... }:
++#
++# 7 EYL 2026 — `aorus-laptop` BIRAKILDI, yerine `aero_eg61h` geldi.
++#
++# Sürücü, servisler ve polkit kuralı artık `~/aero-eg61h`'deki modülden geliyor
++# (aşağıdaki import). Bu dosyada kalan: Fn tuşu hwdb kuralı ve ölçüm defteri.
++#
++# NEDEN DEĞİŞTİ — üç ölçülmüş hata:
++#   1. `pwm1`/`pwm2` yazılabilir sunuyordu, fan umursamıyordu (üç bağımsız kanıt).
++#   2. `temp2`/`temp3` sunuyordu, ikisi de sabit sıfır (SKTC ölü kanal; tam yükte
++#      CPU 91 °C iken bile 0).
++#   3. `fan_mode` YANLIŞ BİLDİRİYORDU — ve yanlış YAZIYORDU. Ayrıntı aşağıda.
++#
++# 3. MADDE BU DOSYAYI DOĞRUDAN İLGİLENDİRİYOR (ölçüldü 7 Eyl, acpi_call ile
++# bit bit): `aorus_laptop`, PECM+0x2C'nin b0/b1/b2'sini birbirini dışlayan bir
++# grup olarak yönetiyor ama b3'ü (ADJF) desenin parçası SAYMIYOR; `fan_mode = 4`
++# bir mod değil, "ADJF'yi kapat" işlemi. Sonuç ADJF'nin o anki durumuna bağlı ve
++# dördünün de doğru çalıştığı bir durum YOK:
++#
++#   yazılan        ADJF=1 iken                    ADJF=0 iken
++#   -------------  -----------------------------  -----------------------------
++#   1 "sessiz"     0x09 = mod4          ✗          0x01 = quiet         ✓
++#   2 "gaming"     0x0a = TANINMIYOR    ✗          0x02 = gaming        ✓
++#   5 "turbo"      0x0c = turbo         ✓          0x04 = TANINMIYOR    ✗
++#   4 "dengeli"    0x04 = TANINMIYOR    ✗          0x04 = TANINMIYOR    ✗
++#
++# İki somut kayıp: (a) bu makine AYLARDIR aşağıdaki servis `fan_mode = 1`
++# ("sessiz") yazarken aslında mod 4'te (balanced) koşuyordu; (b) Süper+M döngüsü
++# ilk adımda ("4") ADJF'yi sıfırlıyordu, ondan sonra hem döngünün "Turbo"su hem
++# `game-perf`'in `fan_mode = 5`'i TANINMAYAN bir desene düşüyordu — yani oyun
++# turbosu sessizce çalışmıyordu.
++#
++# Yeni sürücü deseni dört seçiciyle TAM yazıp yine dört seçiciyle GERİ OKUYOR;
++# uyuşmazlıkta -EIO dönüyor. Bu yüzden varsayılan `balanced` — makinenin
++# gerçekten koştuğu mod bu, ve `quiet` yazmak davranışı DEĞİŞTİRİRDİ.
++#
++# Geçiş planı ve tam ölçüm: ~/aero-eg61h/docs/nixos-gecis.md
++{ config, pkgs, inputs, ... }:
+ 
+-let
+-  kernel = config.boot.kernelPackages.kernel;
+-
+-  # tangalbert919/gigabyte-laptop-wmi — EC erişimi (WMBC/WMBD WMI metodları)
+-  # Uyumluluk doğrulandı: DMI product_family "GIGABYTE AERO" eşleşiyor,
+-  # WMI GUID'leri (ABBC0F6F/72/75) bu makinede mevcut.
+-  # Sunar: hwmon (CPU/GPU sıcaklık, fan RPM, 0.2.0'dan beri CPU+GPU fan duty'si
+-  # PWM kanalı olarak), fan_mode, charge_mode/charge_limit.
+-  # 0.2.0 notu: probe artık eğrinin 15 noktasını okuyor; WMBC 0x68'in içindeki
+-  # Sleep(100ms) yüzünden modül yüklenmesi ~1.5 sn uzuyor (idle bütçesine etkisiz).
+-  #
+-  # 16 Ağu 2026 — YEREL YAMALAR KALDIRILDI, ikisi de upstream'e girdi:
+-  #   fdfa76a0 "Exempt byte-swapping for newer Aero models"  → hwmon RPM swap'ı
+-  #            DMI dalına "GIGABYTE AERO" ekleyerek atlıyor (bizim raporumuzun
+-  #            önerdiği biçimin BİREBİR aynısı, wmi-ec.md "Faz F" §1).
+-  #   c0b0bd14 "Skip silent fan mode ID check for new models" → probe artık
+-  #            DMI ailesi eşleşince 0xFA yoklamasını hiç yapmadan doğrudan
+-  #            FAN_SILENT_MODE (0x57) seçiyor (wmi-ec.md "Faz F" §2).
+-  # Bizim çözümümüzden farklı yol, aynı sonuç: bu makinede product_family tam
+-  # olarak "GIGABYTE AERO" (ölçüldü) → iki dal da eşleşiyor.
+-  # Tag YOK: master'a pinliyoruz, çünkü 0.2.0 (5 Tem) bu düzeltmelerden ÖNCE.
+-  #
+-  # ARAÇ ZİNCİRİ 1 Eyl 2026 — pkgs.stdenv DEĞİL, kernel.stdenv. CachyOS-lto çekirdeği
+-  # clang-21.1.8 + LLVM=1 ile derlendi. Kernel Makefile'ı modüle clang'a özgü bayrak
+-  # verir, gcc bunları tanımaz ve derleme çöker (ilk switch denemesinde ölçüldü):
+-  #   gcc: error: unrecognized command-line option '-mstack-alignment=8'
+-  #                                                '-mretpoline-external-thunk'
+-  #                                                '-fsplit-lto-unit'
+-  # nixpkgs'in kendi acpi_call'ı bu yüzden zaten kernel.stdenv kullanıyor
+-  # (pkgs/os-specific/linux/acpi-call/default.nix) — burada da aynı deseni izliyoruz.
+-  # LTO'suz bir çekirdeğe dönülürse bu satır gcc'ye geri düşer, değiştirmeye gerek yok.
+-  aorus-laptop = kernel.stdenv.mkDerivation {
+-    pname = "aorus-laptop";
+-    version = "0.2.0-unstable-2026-08-08";
++{
++  imports = [ "${inputs.aero-eg61h}/nix/aero-eg61h.nix" ];
+ 
+-    src = pkgs.fetchFromGitHub {
+-      owner = "tangalbert919";
+-      repo  = "gigabyte-laptop-wmi";
+-      rev   = "8abb6655109726bca1d4fd869909d2cb0252e380";   # master (2026-08-08)
+-      hash  = "sha256-172QRXUnIDcEbdOVVEKs1YV1p3gepoikex1SR493SzE=";
+-    };
++  hardware.aero-eg61h = {
++    enable = true;
+ 
+-    nativeBuildInputs = kernel.moduleBuildDependencies;
+-    hardeningDisable  = [ "pic" ];
++    # AC ve pilde aynı: `balanced` (PECM+0x2C = 0x09). Mod 4 sessiz gibi geç
++    # başlıyor (54 °C) ama varsayılan gibi yükselebiliyor (%43 tavan).
++    # Bu, makinenin aorus_laptop altında zaten koştuğu moddu — değiştirmiyoruz.
++    fanMode.ac = "balanced";
++    fanMode.battery = "balanced";
+ 
+-    # kernelModuleMakeFlags: CC/LD/AR/NM/STRIP + LLVM=1 + LLVM_IAS=1 — çekirdeğin
+-    # kendi araç zinciri. Bunu geçmezsen kernel.stdenv doğru derleyiciyi verse bile
+-    # Kbuild alt süreçleri host araçlarına düşer.
+-    makeFlags = config.boot.kernelPackages.kernelModuleMakeFlags ++ [
+-      "KDIR=${kernel.dev}/lib/modules/${kernel.modDirVersion}/build"
+-    ];
++    # Şarj limiti %60 (pil-ömrü modu; yolculuk öncesi tam kapasite gerekiyorsa
++    # 100 yap + rebuild). Sürücü yazımı GERİ OKUYUP doğruluyor; ayrıca kendi
++    # uyanış kancası var (7 Eyl'de doğrulandı: "uyanis: ... korunmus, dokunulmadi").
++    chargeLimit = 60;
+ 
+-    installPhase = ''
+-      runHook preInstall
+-      install -D aorus-laptop.ko \
+-        $out/lib/modules/${kernel.modDirVersion}/extra/aorus-laptop.ko
+-      runHook postInstall
+-    '';
++    # ACBT (0x4C, ×8W): AC'de 80W → nvidia-powerd GPU tavanını 50→75W+ yapar;
++    # pilde 0 (verim). gpu_boost (0x51) yazılMIYOR: bu DSDT'de 2=no-op, 3=dGPU eject!
++    gpuBoost.ac = 10;
++    gpuBoost.battery = 0;
+   };
+-in
+-{
+-  # acpi_call KALICI: dGPU Dynamic Boost bütçesi (NPCF.ACBT) yalnız ham
+-  # WMBD 0x4C ile yazılabiliyor (sürücünün gpu_boost'u LCBT=0 yüzünden işlevsiz;
+-  # bkz. Documentation/aerox16/wmi-ec.md "Faz D+E sonuçları"). power-profile kullanıyor.
+-  boot.extraModulePackages = [ aorus-laptop config.boot.kernelPackages.acpi_call ];
+-  boot.kernelModules = [ "aorus-laptop" "acpi_call" ];
+ 
+   # Çıplak Fn tuşu F20 (HID usage 0x7006f) gönderiyor ve xkb bunu
+   # XF86AudioMicMute'a eşlediği için her Fn basışı mikrofonu aç/kapa
+@@ -80,9 +72,15 @@ in
+      KEYBOARD_KEY_7006f=reserved
+   '';
+ 
+-  # AC/BAT'a göre otomatik fan modu + dGPU Dynamic Boost bütçesi (ölçümler:
+-  # Documentation/aerox16/wmi-ec.md). Varsayılan: BAT=1, AC=1 (16 Ağu 2026'da 4'ten
+-  # 1'e alındı — DÖRT MODUN DA ÖLÇÜLMESİNDEN sonra; tablo wmi-ec.md'de).
++  # ---------------------------------------------------------------------------
++  # ÖLÇÜM DEFTERİ — 16 Ağu 2026 fan modu karşılaştırması
++  # ---------------------------------------------------------------------------
++  # ⚠️ BU TABLO ARTIK ŞÜPHELİ (7 Eyl 2026). `aorus_laptop`'ın numaralandırmasıyla
++  # alındı, ve o numaralandırmanın PECM+0x2C desenlerine eşlenmediği yukarıda
++  # ölçüldü — hangi deseni ölçtüğü ADJF geçmişine bağlı ve belirsiz. Dördü de
++  # belirgin biçimde farklı davrandığına göre dört AYRI desendi, ama hangisinin
++  # hangisi olduğu bilinmiyor. Yeni sürücünün isimleriyle YENİDEN ÖLÇÜLMELİ:
++  #   quiet · balanced · responsive · gaming · turbo
+   #
+   # Ölçümün kısası (4 thread Zen5, 60 sn, aynı yük):
+   #   mod 4  98.1°C  53.9W  4849MHz  fan 4388/4556   boşta fan DURUR
+@@ -90,7 +88,7 @@ in
+   #   mod 2  99.4°C  53.3W  4840MHz  fan 4893/5186   boşta fan DÖNER (2156)
+   #   mod 5  97.0°C  55.1W  4860MHz  fan 6362/6455   boşta fan DÖNER (6594)
+   #
+-  # İki şey öğrenildi:
++  # İki şey öğrenildi (bunlar desen belirsizliğinden ETKİLENMİYOR):
+   # 1) Fan sürekli sıcaklığı DÜŞÜRMÜYOR, performansa çeviriyor. Mod 4→5'te hava
+   #    %45 artıyor, sıcaklık yalnız 1.1°C düşüyor; kazanç güce (53.9→55.1W) ve
+   #    saate (4849→4860MHz) gidiyor. Boost algoritması Tjmax'i HEDEFLİYOR.
+@@ -98,132 +96,15 @@ in
+   # 2) Mod 1 istisna: fan eğrisi değil, 95.0°C hedefli KAPALI ÇEVRİM denetleyici.
+   #    8. sn'den itibaren Tctl tam 95.0'da çakılı; hedefi tutmak için gücü
+   #    (51→45W) ve saati (4840→4742MHz) kırpıyor. Bedeli %2.1 saat, karşılığı
+-  #    4.4°C + fanın yarı devri. AC'de bu takas tercih edildi.
++  #    4.4°C + fanın yarı devri.
+   # NOT: wmi-ec.md'nin eski "4/5 ölü" ve "mod 2-4 etkisiz olabilir" notları YANLIŞ —
+   # dördü de canlı sistemde belirgin biçimde farklı davranıyor (16 Ağu ölçümü).
+-  # Bu servis fişi takınca/uykudan dönünce fan_mode'u yeniden yazdığı için, elle
+-  # 4'e almak KALICI DEĞİLDİ; kalıcılık tam olarak bu satırdan geliyor.
+-  # Fan modu ayrıca Süper+M ile canlı döndürülebiliyor (4→1→2→5, bkz. aşağıdaki
+-  # fan-mode-cycle servisi);
+-  # AC/uyku değişimi bu otomatik varsayılanı yeniden uygular (manuel geçici). ACBT
+-  # (0x4C, ×8W): AC'de 80W → nvidia-powerd GPU tavanını 50→75W+ yapar; pilde 0
+-  # (verim). gpu_boost (0x51) yazılMIYOR: bu DSDT'de 2=no-op, 3=dGPU eject!
+   #
+-  # fan_mode İSTİSNASI (10 Ağu 2026): bu servis fişi takıp çekince VEYA uykudan
+-  # dönünce ACAD udev kuralıyla / resumeCommands ile tetikleniyor — game-perf.service
+-  # oyun ortasında fan_mode=5 (turbo) yazmışken bu servis araya girip KOŞULSUZ 0'a
+-  # geri yazıyordu, yani oyunun ortasında fişle oynama veya suspend-then-hibernate'ten
+-  # dönüş turbo'yu sessizce düşürüyordu. game-perf aktifken fan_mode'a DOKUNMA —
+-  # ACBT (dGPU boost bütçesi) AC/BAT'a göre yine burada yeniden uygulanmalı, o
+-  # yüzden yalnız fan_mode satırı koşullu, ACBT branch'i aynen kalıyor. `is-active`
+-  # burada doğru sorgu: game-perf Type=oneshot + RemainAfterExit=true, yani "oyun
+-  # oturumu sürüyor mu" sorusunun tam karşılığı — zapret defterindeki "is-active ile
+-  # sağlık ölçme" tuzağıyla AYNI ŞEY DEĞİL (orası Restart=always bir daemon'du).
+-  systemd.services.gigabyte-power-profile = {
+-    description = "AC/BAT fan modu + dGPU boost bütçesi (aorus-laptop WMI)";
+-    wantedBy = [ "multi-user.target" ];
+-    after = [ "systemd-modules-load.service" ];
+-    serviceConfig = {
+-      Type = "oneshot";
+-      ExecStart = pkgs.writeShellScript "gigabyte-power-profile" ''
+-        P=/sys/devices/platform/aorus_laptop
+-        [ -d "$P" ] || exit 0
+-        AC=$(cat /sys/class/power_supply/ACAD/online 2>/dev/null || echo 1)
+-        if [ "$AC" = "0" ]; then
+-          FAN=1    # sessiz
+-          ACBT=0   # pilde boost bütçesi kapalı
+-        else
+-          FAN=1    # AC: sessiz — 95°C kilidi + yarı fan devri (16 Ağu ölçümü, yukarı bak)
+-          ACBT=10  # 10×8 = 80W Dynamic Boost bütçesi
+-        fi
+-        if ${pkgs.systemd}/bin/systemctl is-active --quiet game-perf.service; then
+-          : # oyun sürüyor — fan_mode'a dokunma, turbo (5) kalsın
+-        else
+-          echo "$FAN" > "$P/fan_mode"
+-        fi
+-        if [ -w /proc/acpi/call ]; then
+-          echo "\\_SB.PCI0.AMW0.WMBD 0 0x4C $ACBT" > /proc/acpi/call
+-          cat /proc/acpi/call > /dev/null
+-        fi
+-      '';
+-    };
+-  };
+-
+-  # Suspend dönüşünde NPCF/EC durumu garanti değil — profili yeniden uygula
+-  powerManagement.resumeCommands = ''
+-    ${pkgs.systemd}/bin/systemctl start --no-block gigabyte-power-profile.service
+-  '';
+-
+-  services.udev.extraRules = ''
+-    ACTION=="change", SUBSYSTEM=="power_supply", KERNEL=="ACAD", \
+-      RUN+="${pkgs.systemd}/bin/systemctl start --no-block gigabyte-power-profile.service"
+-  '';
+-
+-  # Süper+M fan modu döngüsü (4→1→2→5). fan_mode sysfs'i root gerektirir; bu root
+-  # oneshot servis yazar, sonra masaüstü bildirimini zixar oturumuna runuser +
+-  # kullanıcı DBus'ı üzerinden gönderir. SUPER+M kısayolundan polkit ile ŞİFRESİZ
+-  # tetiklenir (bkz. home/desktop/wm/binds.lua). ACBT'ye DOKUNMAZ — dGPU boost
+-  # ayrı (AC/oyun profili yönetir). Modlar: 4=Dengeli·1=Sessiz·2=Gaming·5=Turbo.
+-  # (Not: Fn+F7 denendi ama Linux'a güvenilir input/ACPI olayı olarak ulaşmıyor.)
+-  systemd.services.fan-mode-cycle = {
+-    description = "aorus-laptop fan modunu döndür (4→1→2→5) + masaüstü bildirimi";
+-    after = [ "systemd-modules-load.service" ];
+-    serviceConfig = {
+-      Type = "oneshot";
+-      ExecStart = pkgs.writeShellScript "fan-mode-cycle" ''
+-        P=/sys/devices/platform/aorus_laptop/fan_mode
+-        [ -w "$P" ] || exit 0
+-        cur=$(${pkgs.coreutils}/bin/cat "$P" 2>/dev/null || echo 0)
+-        case "$cur" in
+-          4) next=1; name="Sessiz"  ;;
+-          1) next=2; name="Gaming"  ;;
+-          2) next=5; name="Turbo"   ;;
+-          5) next=4; name="Dengeli" ;;
+-          *) next=4; name="Dengeli" ;;   # beklenmedik okuma (0 DAHİL) → dengeliye dön
+-        esac
+-        echo "$next" > "$P"
+-        uid=$(${pkgs.coreutils}/bin/id -u zixar 2>/dev/null || echo 1000)
+-        ${pkgs.util-linux}/bin/runuser -u zixar -- \
+-          ${pkgs.coreutils}/bin/env \
+-            DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
+-            XDG_RUNTIME_DIR="/run/user/$uid" \
+-          ${pkgs.libnotify}/bin/notify-send -a Fan -u low -t 2000 \
+-            "Mevcut Mod $next" "$name" >/dev/null 2>&1 || true
+-        # Kalıcı gösterge YOK (09 Ağu): waybar'ın custom/fan modülü Caelestia'ya
+-        # geçişte kaldırıldı — Caelestia bar'ı sabit 8 kimlikli girdi kabul
+-        # ediyor, özel modül eklenemiyor (plugin sistemi de boş repo). Bu
+-        # notify-send toast'ı tek gösterge; Caelestia bildirim daemon'u yakalar.
+-      '';
+-    };
+-  };
+-
+-  # zixar, fan-mode-cycle.service'i şifresiz start edebilsin (Süper+M keybind)
+-  security.polkit.extraConfig = ''
+-    polkit.addRule(function(action, subject) {
+-      if (action.id == "org.freedesktop.systemd1.manage-units" &&
+-          action.lookup("unit") == "fan-mode-cycle.service" &&
+-          subject.user == "zixar") {
+-        return polkit.Result.YES;
+-      }
+-    });
+-  '';
+-
+-  # Şarj limiti %60 (pil-ömrü modu; masaüstü/prizde sürekli kullanım için —
+-  # yolculuk öncesi tam kapasite gerekiyorsa burayı 100'e çek + rebuild) —
+-  # EC'nin reboot sonrası hatırlaması garanti değil, her boot'ta yeniden uygula.
+-  # charge_limit yalnız custom charge_mode'da (1) çalışır.
+-  systemd.services.gigabyte-charge-limit = {
+-    description = "Pil şarj limiti %%60 (aorus-laptop WMI)";
+-    wantedBy = [ "multi-user.target" ];
+-    after = [ "systemd-modules-load.service" ];
+-    serviceConfig = {
+-      Type = "oneshot";
+-      ExecStart = pkgs.writeShellScript "gigabyte-charge-limit" ''
+-        P=/sys/devices/platform/aorus_laptop
+-        [ -d "$P" ] || exit 0
+-        echo 1   > "$P/charge_mode"
+-        echo 60  > "$P/charge_limit"
+-      '';
+-    };
+-  };
++  # fan_mode İSTİSNASI (10 Ağu 2026, modülde KORUNUYOR): AC/uyanış tetikleyicisi
++  # game-perf.service oyun ortasında turbo yazmışken araya girip geri almamalı.
++  # `aero-power-profile` bunu `systemctl is-active game-perf.service` ile
++  # koşullandırıyor; ACBT dalı koşulsuz kalıyor. `is-active` burada doğru sorgu:
++  # game-perf Type=oneshot + RemainAfterExit=true, yani "oyun oturumu sürüyor mu"
++  # sorusunun tam karşılığı — zapret defterindeki "is-active ile sağlık ölçme"
++  # tuzağıyla AYNI ŞEY DEĞİL (orası Restart=always bir daemon'du).
+ }
+diff --git a/system/kernel/sched.nix b/system/kernel/sched.nix
+index 7d7df80..e58b085 100644
+--- a/system/kernel/sched.nix
++++ b/system/kernel/sched.nix
+@@ -32,9 +32,14 @@ let
+         echo '\_SB.PCI0.AMW0.WMBD 0 0xED 2' > /proc/acpi/call
+         cat /proc/acpi/call > /dev/null
+       fi
+-      # Turbo fan (max üfleme) — aorus-laptop preset selector
+-      F=/sys/devices/platform/aorus_laptop/fan_mode
+-      [ -w "$F" ] && echo 5 > "$F"
++      # Turbo fan (max üfleme) — aero_eg61h, PECM+0x2C = 0x0C (düz %63 eğrisi).
++      # 7 Eyl 2026: eskiden `aorus_laptop`'a `5` yazılıyordu ve bu, ADJF biti
++      # 0 iken TANINMAYAN bir desen (0x04) üretip varsayılana düşüyordu — yani
++      # oyun turbosu sessizce çalışmıyordu. Yeni sürücü deseni tam yazıp geri
++      # okuyor; yazma tutmazsa -EIO döner (burada sessizce yutuluyor, gamerun
++      # tasarım kuralı A: hiçbir yan etki oyunu engellemez).
++      F=$(echo /sys/bus/wmi/devices/ABBC0F75-*/fan_mode)
++      [ -w "$F" ] && echo turbo > "$F"
+       # CPU güç profili — VARSAYILAN balanced (GPU-öncelik, 2026-07-18).
+       # Neden performance DEĞİL: CPU ile dGPU, NVIDIA Dynamic Boost (ACBT 80W) altında
+       # PAYLAŞIMLI güç/termal bütçe kullanıyor. performance preset'i amd-pmf'e en yüksek

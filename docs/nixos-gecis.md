@@ -113,6 +113,13 @@ ama merak edilirse ölçümü basit: aorus blacklist'liyken cold boot sonrası
 
 ## 4. Uygulanacak değişiklik (`~/nixos-zixar`)
 
+> **HAZIR YAMA VAR (7 Eyl 2026).** Aşağıdaki tarifin tamamı
+> `nix/nixos-zixar-gecis.patch`'te; `~/nixos-zixar`'a dokunulmadan üretildi,
+> orada değerlendirildi ve `git apply --check` ile temiz uygulandığı
+> doğrulandı. Uygulama ve doğrulama adımları: `nix/README.md`.
+>
+> Aşağısı yamanın *neden* öyle olduğunu anlatıyor.
+
 **NixOS modülü yazıldı ve doğrulandı: `nix/aero-eg61h.nix`.** Bu sayede
 `~/nixos-zixar` tarafındaki iş üç küçük parçaya indi.
 
