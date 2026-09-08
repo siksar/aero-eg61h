@@ -114,6 +114,12 @@ in
       };
     };
 
+    user = lib.mkOption {
+      type = lib.types.str;
+      default = "zixar";
+      description = "Fan modu ve şarj limitini şifresiz değiştirebilecek kullanıcı.";
+    };
+
     chargeLimit = lib.mkOption {
       type = lib.types.ints.between 1 100;
       default = 60;
@@ -239,8 +245,8 @@ in
           # Ne yazdığımızı değil, EC'nin GERÇEKTEN ne koştuğunu bildir.
           # (aorus_laptop'ın hatası tam olarak buydu: yazdığını bildiriyordu.)
           shown=$(${pkgs.coreutils}/bin/cat "$F")
-          uid=$(${pkgs.coreutils}/bin/id -u zixar 2>/dev/null || echo 1000)
-          ${pkgs.util-linux}/bin/runuser -u zixar -- \
+          uid=$(${pkgs.coreutils}/bin/id -u ${cfg.user} 2>/dev/null || echo 1000)
+          ${pkgs.util-linux}/bin/runuser -u ${cfg.user} -- \
             ${pkgs.coreutils}/bin/env \
               DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
               XDG_RUNTIME_DIR="/run/user/$uid" \
@@ -250,14 +256,78 @@ in
       };
     };
 
-    # zixar, aero-fan-cycle.service'i şifresiz start edebilsin (Süper+M keybind)
+    # ---------------------------------------------------------------------
+    # YAZMA KÖPRÜSÜ — parametreli şablon birimler
+    # ---------------------------------------------------------------------
+    # KARAR (8 Eyl 2026, ÖLÇÜMLE): D-Bus daemon YOK.
+    #
+    # PLAN §2 daemon'u iki gerekçeyle koymuştu. Biri — GUI kapalıyken şarj
+    # limitini uyanışta yeniden uygulamak — sürücünün kendi .resume kancasına
+    # taşındı ve doğrulandı. Kalan tek gerekçe yetki aracılığıydı; ölçüldü ki
+    # onun için zaten iki köprü var ve ikisi de YETKİSİZ kullanıcıyla çalışıyor:
+    #
+    #   powerprofilesctl set power-saver  ->  platform_profile = low-power
+    #   systemctl start aero-fan-cycle    ->  fan modu değişti
+    #
+    # Yani profil için PPD kullanılıyor (hiç yeni kod yok), fan modu ve şarj
+    # limiti için aynı polkit deseni parametreli hâle getiriliyor. Daemon
+    # kurmak boşta güç bütçesi açısından da gereksiz bir yük olurdu.
+    #
+    # GÜVENLİK: şablonun %i'si kullanıcıdan geliyor, o yüzden birim betiği
+    # girdiyi KENDİ doğruluyor. Doğrulamayı polkit kuralına bırakmak yanlış
+    # olurdu — kural yalnız "bu birimi başlatabilir mi"yi biliyor, "hangi
+    # değerle"yi değil.
+    systemd.services."aero-set-fan@" = {
+      description = "Fan modunu %i yap (aero_eg61h)";
+      serviceConfig.Type = "oneshot";
+      scriptArgs = "%i";
+      script = ''
+        mode="$1"
+        # Beyaz liste: sysfs'e yalnız bilinen beş isimden biri gider.
+        case "$mode" in
+          ${lib.concatStringsSep "|" fanModes}) ;;
+          *) echo "gecersiz fan modu: $mode" >&2; exit 1 ;;
+        esac
+        F=$(echo /sys/bus/wmi/devices/ABBC0F75-*/fan_mode)
+        [ -w "$F" ] || { echo "fan_mode dugumu yok — surucu yuklu mu?" >&2; exit 1; }
+        echo "$mode" > "$F"
+        # Sürücü yazımı zaten geri okuyup doğruluyor; biz de bakalım.
+        got=$(cat "$F")
+        [ "$got" = "$mode" ] || { echo "yazildi $mode ama $got okunuyor" >&2; exit 1; }
+      '';
+    };
+
+    systemd.services."aero-set-charge@" = {
+      description = "Sarj limitini %i yap (aero_eg61h)";
+      serviceConfig.Type = "oneshot";
+      scriptArgs = "%i";
+      script = ''
+        pct="$1"
+        case "$pct" in
+          ""|*[!0-9]*) echo "sayi degil: $pct" >&2; exit 1 ;;
+        esac
+        # Sürücü 0'ı zaten reddediyor (anlamı ölçülmedi); burada da durduruyoruz
+        # ki geçersiz değer sysfs'e hiç gitmesin.
+        [ "$pct" -ge 1 ] && [ "$pct" -le 100 ] || { echo "1-100 disinda: $pct" >&2; exit 1; }
+        N=/sys/class/power_supply/BAT1/charge_control_end_threshold
+        [ -w "$N" ] || { echo "sarj limiti dugumu yok" >&2; exit 1; }
+        echo "$pct" > "$N"
+      '';
+    };
+
+    # Yazma köprüsünün polkit tarafı. `active` oturum için ŞİFRESİZ — PLAN §7'nin
+    # "fan modu / profil / şarj limiti = active yes" satırı. `auth_admin` isteyen
+    # DIKKAT sınıfı kontroller henüz sunulmuyor; geldiklerinde AYRI birimler ve
+    # AYRI bir kural olacak, bu kurala eklenmeyecek.
     security.polkit.extraConfig = ''
       polkit.addRule(function(action, subject) {
-        if (action.id == "org.freedesktop.systemd1.manage-units" &&
-            action.lookup("unit") == "aero-fan-cycle.service" &&
-            subject.user == "zixar") {
-          return polkit.Result.YES;
-        }
+        if (action.id != "org.freedesktop.systemd1.manage-units") return polkit.Result.NOT_HANDLED;
+        if (subject.user != "${cfg.user}") return polkit.Result.NOT_HANDLED;
+        var unit = action.lookup("unit");
+        if (unit == "aero-fan-cycle.service") return polkit.Result.YES;
+        if (unit && unit.indexOf("aero-set-fan@") === 0) return polkit.Result.YES;
+        if (unit && unit.indexOf("aero-set-charge@") === 0) return polkit.Result.YES;
+        return polkit.Result.NOT_HANDLED;
       });
     '';
 
