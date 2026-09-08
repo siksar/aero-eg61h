@@ -149,6 +149,14 @@ başlatamıyor** — kullanıcı çalıştırmalı:
 setsid nohup bash -c 'for i in $(seq 1 240); do sudo -n -v || exit 0; sleep 60; done' >/dev/null 2>&1 & disown
 ```
 
+## Bilinen küçük kusur
+
+`aero-ctl` çıktısı `| head` gibi erken kapanan bir boruya yazarken **panikliyor**
+(SIGPIPE, `failed printing to stdout: Broken pipe`). Zararsız ama çirkin.
+Düzeltmesi tek satır: `main`'in başında SIGPIPE'ı varsayılana döndür ya da
+`println!` yerine hatayı yutan bir yazma kullan. Şimdilik `| head` yerine
+tam çıktıya bakın.
+
 ## Hızlı sağlık kontrolü
 
 ```bash
