@@ -20,7 +20,7 @@
 //! (Durum/Fan'da 2 sn, diğerlerinde 5 sn). Uygulama kapanınca hiçbir şey
 //! arkada kalmıyor — 4.28 W boşta bütçesi kuralı.
 
-use aero_sysfs::Snapshot;
+use aero_sysfs::{Action, FanMode, Snapshot, apply};
 use cosmic::app::{Core, Settings, Task};
 use cosmic::iced::{Alignment, Length, Subscription, time};
 use cosmic::widget::{self, segmented_button};
@@ -31,6 +31,7 @@ const APP_ID: &str = "dev.zixar.AeroControl";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Panel {
+    OnAyarlar,
     Durum,
     FanTermal,
     GucPerformans,
@@ -38,16 +39,80 @@ enum Panel {
     Hakkinda,
 }
 
+/// Basit menünün "tavsiye edilen ayar" paketleri (`PLAN.md` §5).
+///
+/// Her biri fan modu + performans profilini TUTARLI bir paket olarak kuruyor.
+/// Amacı bir şeyi bozamamak: ham sayı yok, isimlendirilmiş kombinasyon var.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct OnAyar {
+    ad: &'static str,
+    aciklama: &'static str,
+    fan: FanMode,
+    profil: &'static str,
+}
+
+/// `profil` değerleri sürücünün sunduğu üçlüden: low-power / balanced /
+/// performance. (`balanced-performance` ölçümle düşürüldü — fazladan seçenek
+/// `amd-pmf`'e de yazılıyordu ve orada ne yaptığı ölçülmemişti.)
+const ON_AYARLAR: &[OnAyar] = &[
+    OnAyar {
+        ad: "Sessiz",
+        aciklama: "Okuma, yazma, pil ömrü. Fan 54 °C'ye kadar durur.",
+        fan: FanMode::Quiet,
+        profil: "low-power",
+    },
+    OnAyar {
+        ad: "Dengeli",
+        aciklama: "Günlük kullanım. Geç başlar ama gerekince yükselir — varsayılan.",
+        fan: FanMode::Balanced,
+        profil: "balanced",
+    },
+    OnAyar {
+        ad: "Duyarlı",
+        aciklama: "Erken soğutma isteyen. Fan 40 °C'de devreye girer.",
+        fan: FanMode::Responsive,
+        profil: "balanced",
+    },
+    OnAyar {
+        ad: "Performans",
+        aciklama: "Oyun ve derleme. Daha yüksek güç bütçesi, daha sesli fan.",
+        fan: FanMode::Gaming,
+        profil: "performance",
+    },
+    OnAyar {
+        ad: "Maksimum",
+        aciklama: "Kısa süreli tam yük. Fan düz %63 — sürekli kullanım için değil.",
+        fan: FanMode::Turbo,
+        profil: "performance",
+    },
+];
+
 #[derive(Debug, Clone)]
 enum Message {
     /// Zamanlayıcı tetikledi — sysfs'i yeniden oku.
     Tik,
+    /// Bir ön ayar paketini uygula (fan modu + profil).
+    OnAyarUygula(usize),
+    /// Tek bir fan modunu uygula.
+    FanModu(FanMode),
+    /// Tek bir profili uygula.
+    Profil(String),
+    /// Şarj limiti kaydırıcısı sürükleniyor (henüz yazma yok).
+    SarjKaydir(u8),
+    /// Kaydırıcı bırakıldı — şimdi yaz.
+    SarjUygula,
+    /// Hata şeridini kapat.
+    HataKapat,
 }
 
 struct App {
     core: Core,
     nav: segmented_button::SingleSelectModel,
     snap: Snapshot,
+    /// Kaydırıcı sürüklenirken geçici değer; bırakılınca yazılıyor.
+    sarj_taslak: u8,
+    /// Son yazma hatası — kullanıcıya aynen gösteriliyor, yutulmuyor.
+    hata: Option<String>,
 }
 
 impl App {
@@ -95,6 +160,85 @@ impl App {
 
     fn yok() -> String {
         "—".into()
+    }
+
+    /// Eylemi köprüye gönderir ve durumu HEMEN geri okur.
+    /// Yazdığımızı değil sistemin okuduğunu göstermek bu uygulamanın
+    /// varlık sebebi — `aorus_laptop`'ın hatası tam olarak yazdığını
+    /// bildirmekti.
+    fn uygula(&mut self, a: Action) {
+        match apply(&a) {
+            Ok(()) => self.hata = None,
+            Err(e) => self.hata = Some(e.to_string()),
+        }
+        self.snap = Snapshot::read();
+        if let Some(v) = self.snap.charge_limit_pct {
+            self.sarj_taslak = v;
+        }
+    }
+
+    /// Son yazma hatası — yutmuyoruz, aynen gösteriyoruz.
+    fn hata_seridi(&self) -> Option<Element<'_, Message>> {
+        let h = self.hata.as_ref()?;
+        Some(
+            widget::container(
+                widget::row::with_capacity(2)
+                    .spacing(12)
+                    .align_y(Alignment::Center)
+                    .push(widget::text::body(h.clone()).width(Length::Fill))
+                    .push(widget::button::text("Kapat").on_press(Message::HataKapat)),
+            )
+            .class(cosmic::theme::Container::Card)
+            .padding(16)
+            .width(Length::Fill)
+            .into(),
+        )
+    }
+
+    /// Basit menü: beş isimlendirilmiş paket + şarj limiti. Ham sayı yok.
+    fn on_ayarlar(&self) -> Element<'_, Message> {
+        let s = &self.snap;
+        let mut sec = widget::settings::section()
+            .title("Ön ayarlar")
+            .add(widget::text::caption(
+                "Her ön ayar fan modu ile performans profilini tutarlı bir paket \
+                 olarak kurar. Ayrı ayrı ayarlamak için diğer panellere bakın.",
+            ));
+
+        for (i, o) in ON_AYARLAR.iter().enumerate() {
+            let etkin = s.fan_mode == Some(o.fan)
+                && s.platform_profile.as_deref() == Some(o.profil);
+            let dugme = if etkin {
+                widget::button::suggested("Etkin")
+            } else {
+                widget::button::standard("Uygula").on_press(Message::OnAyarUygula(i))
+            };
+            sec = sec.add(
+                widget::settings::item::builder(o.ad)
+                    .description(o.aciklama)
+                    .control(dugme),
+            );
+        }
+
+        let sarj = widget::settings::section()
+            .title("Şarj limiti")
+            .add(
+                widget::settings::item::builder(format!("%{}", self.sarj_taslak))
+                    .description(
+                        "Pil ömrü için 60 tavsiye edilir; yolculuk öncesi 100 yapın.",
+                    )
+                    .control(
+                        widget::slider(1..=100u8, self.sarj_taslak, Message::SarjKaydir)
+                            .on_release(Message::SarjUygula)
+                            .width(Length::Fixed(240.0)),
+                    ),
+            );
+
+        widget::column::with_capacity(4)
+            .spacing(24)
+            .push(sec)
+            .push(sarj)
+            .into()
     }
 
     fn durum(&self) -> Element<'_, Message> {
@@ -154,10 +298,15 @@ impl App {
         } else {
             for m in &s.fan_mode_choices {
                 let secili = s.fan_mode == Some(*m);
+                let dugme = if secili {
+                    widget::button::suggested("Etkin")
+                } else {
+                    widget::button::standard("Seç").on_press(Message::FanModu(*m))
+                };
                 modlar = modlar.add(
                     widget::settings::item::builder(m.label())
                         .description(m.describe())
-                        .control(widget::text::body(if secili { "● etkin" } else { "" })),
+                        .control(dugme),
                 );
             }
         }
@@ -200,11 +349,14 @@ impl App {
             "Etkin",
             s.platform_profile.clone().unwrap_or_else(Self::yok),
         ));
-        if !s.platform_profile_choices.is_empty() {
-            sec = sec.add(self.satir(
-                "Seçenekler",
-                s.platform_profile_choices.join(", "),
-            ));
+        for p in &s.platform_profile_choices {
+            let etkin = s.platform_profile.as_deref() == Some(p.as_str());
+            let dugme = if etkin {
+                widget::button::suggested("Etkin")
+            } else {
+                widget::button::standard("Seç").on_press(Message::Profil(p.clone()))
+            };
+            sec = sec.add(widget::settings::item::builder(p.clone()).control(dugme));
         }
 
         let mut col = widget::column::with_capacity(8).spacing(24).push(sec);
@@ -301,10 +453,14 @@ impl Application for App {
     fn init(core: Core, _flags: Self::Flags) -> (Self, Task<Self::Message>) {
         let mut nav = segmented_button::SingleSelectModel::default();
         nav.insert()
+            .text("Ön Ayarlar")
+            .icon(widget::icon::from_name("preferences-system-symbolic"))
+            .data(Panel::OnAyarlar)
+            .activate();
+        nav.insert()
             .text("Durum")
             .icon(widget::icon::from_name("utilities-system-monitor-symbolic"))
-            .data(Panel::Durum)
-            .activate();
+            .data(Panel::Durum);
         nav.insert()
             .text("Fan ve Termal")
             .icon(widget::icon::from_name("temperature-symbolic"))
@@ -322,10 +478,13 @@ impl Application for App {
             .icon(widget::icon::from_name("help-about-symbolic"))
             .data(Panel::Hakkinda);
 
+        let snap = Snapshot::read();
         let app = App {
             core,
             nav,
-            snap: Snapshot::read(),
+            sarj_taslak: snap.charge_limit_pct.unwrap_or(60),
+            snap,
+            hata: None,
         };
 
         (app, Task::none())
@@ -342,16 +501,46 @@ impl Application for App {
 
     fn update(&mut self, message: Self::Message) -> Task<Self::Message> {
         match message {
-            Message::Tik => self.snap = Snapshot::read(),
+            Message::Tik => {
+                self.snap = Snapshot::read();
+                // Kaydırıcı sürüklenmiyorken sistemin gerçek değerini izle.
+                if let Some(v) = self.snap.charge_limit_pct {
+                    self.sarj_taslak = v;
+                }
+            }
+
+            Message::HataKapat => self.hata = None,
+
+            Message::SarjKaydir(v) => self.sarj_taslak = v,
+
+            Message::SarjUygula => self.uygula(Action::ChargeLimit(self.sarj_taslak)),
+
+            Message::FanModu(m) => self.uygula(Action::FanMode(m)),
+
+            Message::Profil(p) => self.uygula(Action::Profile(p)),
+
+            Message::OnAyarUygula(i) => {
+                if let Some(o) = ON_AYARLAR.get(i) {
+                    // Fan modu ÖNCE: profil yazımı PPD üzerinden gidiyor ve
+                    // AC/pil olaylarını tetikleyebiliyor; fanı önce oturtmak
+                    // ara durumda yanlış eğride kalmayı kısaltıyor.
+                    self.uygula(Action::FanMode(o.fan));
+                    if self.hata.is_none() {
+                        self.uygula(Action::Profile(o.profil.to_string()));
+                    }
+                }
+            }
         }
         Task::none()
     }
+
 
     /// Örnekleme YALNIZ uygulama açıkken. Görünür panele göre yavaşlıyor:
     /// canlı sayı göstermeyen panellerde EC'yi boşuna yormanın anlamı yok.
     fn subscription(&self) -> Subscription<Self::Message> {
         let period = match self.panel() {
             Panel::Durum | Panel::FanTermal => Duration::from_secs(2),
+            Panel::OnAyarlar => Duration::from_secs(3),
             _ => Duration::from_secs(5),
         };
         time::every(period).map(|_| Message::Tik)
@@ -359,6 +548,7 @@ impl Application for App {
 
     fn view(&self) -> Element<'_, Self::Message> {
         let icerik = match self.panel() {
+            Panel::OnAyarlar => self.on_ayarlar(),
             Panel::Durum => self.durum(),
             Panel::FanTermal => self.fan_termal(),
             Panel::GucPerformans => self.guc_performans(),
@@ -367,6 +557,9 @@ impl Application for App {
         };
 
         let mut col = widget::column::with_capacity(8).spacing(24);
+        if let Some(h) = self.hata_seridi() {
+            col = col.push(h);
+        }
         if let Some(banner) = self.eksikler() {
             col = col.push(banner);
         }

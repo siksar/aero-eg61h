@@ -1,4 +1,4 @@
-# `aero-eg61h` — plan
+| 6 | ~~Daemon~~ → **yetki köprüsü** (polkit + PPD, daemon YOK) | `aero-ctl set` yetkisiz çalışıyor, geçersizler reddediliyor | ✅ **8 Eyl 2026** || 8 | **Basit menü** — 5 ön ayar + şarj kaydırıcısı | köprü canlı doğrulandı (yetkisiz); geçersiz girdiler reddediliyor | ✅ **8 Eyl 2026** |# `aero-eg61h` — plan
 
 > 7 Eylül 2026 · Gigabyte AERO X16 1VH (SKU EG61VH) · BIOS FB0A / EC F00A
 > Masaüstü: **COSMIC** (System76) · NixOS · çekirdek 7.2.2-cachyos-lto

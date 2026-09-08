@@ -113,3 +113,43 @@ kendi başımıza rev seçmiyoruz. `a11y` özelliği BİLEREK yok (upstream
 
 594 crate, ilk derleme ~2 dk. Nix paketi: `nix/aero-control.nix`
 (`libcosmicAppHook` + `cargoLock.outputHashes`).
+
+## Yazma yolu (8 Eyl 2026)
+
+**D-Bus daemon YOK** — karar ölçümle verildi. Var olan iki köprü kullanılıyor:
+
+| eylem | köprü | yetki |
+|---|---|---|
+| Performans profili | `powerprofilesctl set` (PPD) | yok — PPD zaten polkit'li |
+| Fan modu | `systemctl start aero-set-fan@<mod>` | yok — modülün polkit kuralı |
+| Şarj limiti | `systemctl start aero-set-charge@<yüzde>` | yok — aynı kural |
+
+**Doğrulama ayrıcalıklı tarafta.** `%i` kullanıcıdan geliyor, o yüzden beyaz
+listeyi systemd birimi tutuyor. Rust tarafındaki aralık denetimi yalnız hızlı
+geri bildirim için; kaldırılsa sistem güvensiz olmaz, yalnız hata mesajı geç
+ve çirkin olur.
+
+```bash
+aero-ctl set fan turbo
+aero-ctl set charge 80
+aero-ctl set profile performance
+```
+
+Başarıda **yazdığını değil sistemin geri okuduğunu** bildirir.
+
+### GUI: Ön Ayarlar paneli
+
+Beş isimlendirilmiş paket (`PLAN.md` §5) — her biri fan modu + profili tutarlı
+bir bütün olarak kurar. Ham sayı yok; amacı bir şeyi bozamamak.
+
+| ön ayar | fan | profil |
+|---|---|---|
+| Sessiz | `quiet` | `low-power` |
+| Dengeli | `balanced` (mod 4) | `balanced` |
+| Duyarlı | `responsive` (mod 0) | `balanced` |
+| Performans | `gaming` | `performance` |
+| Maksimum | `turbo` | `performance` |
+
+Artı şarj limiti kaydırıcısı (bırakılınca yazar).
+
+Yazma hatası **yutulmuyor** — üstte kapatılabilir bir şeritte aynen gösteriliyor.
