@@ -377,9 +377,9 @@ Her adım tek başına çalışır ve tek başına doğrulanır.
 | 3 | **`charge_control_end_threshold`** + uyanış kancası | 60→80→45→60 geri okumayla eşleşti; kanca uyanışta tetiklendi | ✅ **7 Eyl 2026** |
 | 4 | **Fan modu** — beş mod, özel sysfs (K1 = a′: `platform_profile`'a girmez) | turbo boşta fanları 0→7000 rpm'e çıkardı | ✅ **7 Eyl 2026** |
 | 5 | **`platform_profile`** — yalnız `0xED` | legacy seçenekler modülsüz hâlle **birebir aynı**; üç profil iki handler'a birden gidiyor | ✅ **7 Eyl 2026** |
-| 6 | **Daemon** — D-Bus arayüzü + polkit, sürücüsüz `degraded` kipi dahil | `busctl` ile elle çağırma | |
+| 6 | ~~Daemon~~ → **yetki köprüsü** (polkit + PPD; daemon YOK, karar ölçümle) | `aero-ctl set` yetkisiz çalışıyor, geçersizler reddediliyor | ✅ **8 Eyl 2026** |
 | 7 | **GUI iskeleti** — `nav_bar` + 5 panel, hepsi salt okunur | 594 crate derlendi; Wayland oturumunda çöküşsüz açıldı | ✅ **8 Eyl 2026** |
-| 8 | **Basit menü** — 5 ön ayar + 1 kaydırıcı | ön ayara basınca `fan_mode` gerçekten değişiyor | |
+| 8 | **Basit menü** — 5 ön ayar + şarj kaydırıcısı | köprü yetkisiz çalışıyor; beş geçersiz girdi reddedildi | ✅ **8 Eyl 2026** |
 | 9 | **Gelişmiş menü** — ayrık kontroller + onay diyalogları | `DIKKAT` ayarları parola istiyor, geri al çalışıyor | |
 | 10 | **EC İncelemesi paneli** | çıktı `ecpoke` ölçümüyle bayt-birebir | |
 | 11 | **NixOS geçişi** — `aorus_laptop` bırakılır | yama uygulandı, `verify-context.sh` geçti, switch edildi | ✅ **8 Eyl 2026** (reboot bekliyor) |
