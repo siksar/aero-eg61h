@@ -3,7 +3,8 @@
 > 7 Eylül 2026 · Gigabyte AERO X16 1VH (SKU EG61VH) · BIOS FB0A / EC F00A
 > Masaüstü: **COSMIC** (System76) · NixOS · çekirdek 7.2.2-cachyos-lto
 >
-> **Durum: çekirdek katmanı bitti — adım 5'e kadar doğrulandı** (§10) — sürücü artık fan modunu
+> **Durum: çekirdek katmanı + GUI iskeleti + NixOS geçişi bitti** (§10).
+> Kalan: yazma yolu (adım 6 yetki köprüsü, 8-9 menüler) ve EC paneli (10) — sürücü artık fan modunu
 > ve şarj limitini yazabiliyor. `aorus_laptop`'a geçiş planı: `docs/nixos-gecis.md`.
 > Kararların tamamı §12'de; sürücü kararları (K1-K5) 7 Eyl'de kapandı.
 
@@ -377,11 +378,11 @@ Her adım tek başına çalışır ve tek başına doğrulanır.
 | 4 | **Fan modu** — beş mod, özel sysfs (K1 = a′: `platform_profile`'a girmez) | turbo boşta fanları 0→7000 rpm'e çıkardı | ✅ **7 Eyl 2026** |
 | 5 | **`platform_profile`** — yalnız `0xED` | legacy seçenekler modülsüz hâlle **birebir aynı**; üç profil iki handler'a birden gidiyor | ✅ **7 Eyl 2026** |
 | 6 | **Daemon** — D-Bus arayüzü + polkit, sürücüsüz `degraded` kipi dahil | `busctl` ile elle çağırma | |
-| 7 | **GUI iskeleti** — `nav_bar` + 7 panel, hepsi salt okunur | tema COSMIC ile uyumlu, gece/gündüz çalışıyor | |
+| 7 | **GUI iskeleti** — `nav_bar` + 5 panel, hepsi salt okunur | 594 crate derlendi; Wayland oturumunda çöküşsüz açıldı | ✅ **8 Eyl 2026** |
 | 8 | **Basit menü** — 5 ön ayar + 1 kaydırıcı | ön ayara basınca `fan_mode` gerçekten değişiyor | |
 | 9 | **Gelişmiş menü** — ayrık kontroller + onay diyalogları | `DIKKAT` ayarları parola istiyor, geri al çalışıyor | |
 | 10 | **EC İncelemesi paneli** | çıktı `ecpoke` ölçümüyle bayt-birebir | |
-| 11 | **NixOS geçişi** — `aorus_laptop` bırakılır | `docs/nixos-gecis.md` | **kullanıcı onayıyla** |
+| 11 | **NixOS geçişi** — `aorus_laptop` bırakılır | yama uygulandı, `verify-context.sh` geçti, switch edildi | ✅ **8 Eyl 2026** (reboot bekliyor) |
 
 Adım 7'ye kadar sürücü şart değil (daemon `acpi_call` yoluna düşer), yani GUI
 paralel geliştirilebilir.
