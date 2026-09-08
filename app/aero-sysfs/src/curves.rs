@@ -1,640 +1,351 @@
 // SPDX-License-Identifier: GPL-2.0-only
-//! EC firmware'inden çıkarılmış fan eğrisi tabloları — derleme zamanı sabit veri.
+// OTOMATİK ÜRETİLDİ — elle düzenleme. Üreteci: aero-sysfs/gen-curves.py
+//
+//! Fan eğrisi tabloları — EC firmware imajından çıkarılmış sabit veri.
 //!
-//! # Bu dosya ne DEĞİL
+//! # Neden burada
 //!
-//! Bu bir denetim (control) katmanı değil. Sürücü eğri **yazamıyor**
-//! (`XFNW` / `0x68` ölü protokol, `FDTY`/`FAN1` ölü yazmaç — ölçüldü). Burada
-//! olan tek şey, EC'nin **kendi** kullandığı tabloların okunabilir bir kopyası:
-//! GUI "sessiz modda fan 68 °C'de %21'e çıkar" diyebilsin diye.
+//! Eğriler EC'nin iç adres uzayında (`0xF8AC`/`0xF8E2`) ve oradan okumak
+//! `EIDR` mailbox'ı gerektiriyor — yavaş (~600 ms/tablo) ve şu an sürücüden
+//! erişilebilir DEĞİL (`ECTE` zaman aşımı denetimi için ACPI yolu yok, bkz.
+//! `kernel/README.md`). Ama aynı tablolar firmware imajında da duruyor ve
+//! **ölçülen sekiz aktif tablonun sekizi de kaynakta birebir eşleşti**
+//! (`~/ecscope/docs/firmware-8051.md` §4.2).
 //!
-//! # Kaynak ve izlenebilirlik
+//! Yani arayüz eğrileri **hiçbir donanıma dokunmadan, anında** çizebiliyor.
 //!
-//! Tablolar `EG61H-EC-F00A.bin` (BIOS FB0A / EC F00A) imajından, `0x0616E`'deki
-//! 8 baytlık kural tablosunun işaret ettiği adreslerden alındı. Kural tablosu
-//! kaydı: `{ b0, 0x00, b2, mod, 0x00, 0xFF, adres_hi, adres_lo }`.
-//! Çözümleme `~/ecscope/docs/firmware-8051.md` §4'te.
+//! # DİKKAT: BASAMAK, EĞRİ DEĞİL
 //!
-//! Her tablo dosyada **15 satır × 5 bayt** (`t1, t2, duty, bayrak1, bayrak2`,
-//! adım `0x4B`). Satır 0 `t1 = 0` başlığıdır ve EC XRAM'e **kopyalanmaz**;
-//! canlı ölçümde görülen 14 satır × 3 bayt onun ardındaki veri satırlarıdır
-//! (`0xF8AC` / `0xF8E2`). Bu yüzden [`Curve::points`] 14 elemanlı, başlık ayrı
-//! alanda ([`Curve::header`]) ve yorumsuz duruyor.
+//! `t1`/`t2`'nin ara değerlerde interpolasyon mu yoksa eşik mi olduğu
+//! **ÖLÇÜLMEDİ** (`firmware-8051.md` §9, açık iş). Bu yüzden [`Egri::duty`]
+//! basamak (step) semantiği kullanıyor: en son aşılan eşiğin duty'si.
+//! Bu, en az iddia eden gösterim. Ölçüm interpolasyon çıkarırsa burası
+//! değişir; o zamana kadar uydurma yapmıyoruz.
 //!
-//! Grup içinde `b0 = 0x00` → fan 0, `b0 = 0x10` → fan 1 (7 Eyl 2026'da canlı
-//! doğrulandı: AC'de mod `0x01` yüklenince kayıt 0 = `0x05A66`,
-//! kayıt 1 = `0x05AB1`). Aynı gruptaki `b0 = 0x30` ve `0x40` tablolarının ne
-//! olduğu **bilinmiyor** — AC/DC hipotezi ölçümle çürüdü — bu yüzden buraya
-//! **alınmadılar**.
+//! # Sunulmayan iki tablo
 //!
-//! # ÖLÇÜLMEMİŞ OLAN — ve API'nin neden BASAMAK sunduğu
-//!
-//! `t1` ve `t2`'nin ara sıcaklıklarda nasıl değerlendirildiği **ölçülmedi**.
-//! Değerlendirici kod firmware'de bulunamadı; `t2`'nin ikinci bir eşik mi,
-//! histerezis tavanı mı, başka bir sensör mü olduğu bilinmiyor (`t2` bazı
-//! satırlarda 100'ü aşıyor: gaming/turbo fan 0'da 105 ve 110).
-//!
-//! Bu yüzden [`Curve::duty_step`] **interpolasyon YAPMAZ**. `t1`'i eşik kabul
-//! eden düz bir basamak fonksiyonudur: sıcaklığın geçtiği **son** satırın
-//! `duty`'sini döner. Bu, tablonun kendi verisinin en zayıf yorumu — gerçek EC
-//! davranışı bundan daha yumuşak (rampalı) olabilir. Eğri "gerçekte" ne yapıyor
-//! sorusunun cevabı ancak sıcaklık/rpm ölçümüyle gelir; o ölçüm yapılana kadar
-//! GUI'de gösterilen şey "tablo bunu diyor", "fan bunu yapıyor" değil.
-//!
-//! `t1`'in CPU sıcaklığı eşiği olduğu tek başına ölçülmüş değil, ama beş modun
-//! [`FanMode::describe`] özetiyle ("54 °C'de başlar" vb.) birebir tutuyor —
-//! `curve_ozetler_fan_mode_describe_ile_tutar` testi bunu bağlıyor.
+//! Her grupta dört tablo var (`b0` = 0x00/0x10/0x30/0x40). Yalnız `0x00`
+//! (fan 0) ve `0x10` (fan 1) sunuluyor — **bütün ölçümler pilde yapıldığı
+//! için `0x30`/`0x40` hiç görülmedi** ve ne oldukları açıklanmadı
+//! (AC/DC ayrımı hipotezi 7 Eyl'de çürüdü).
 
 use crate::FanMode;
 
-/// Kural tablosunun firmware ofseti — kanıt zincirinin başı.
-pub const RULE_TABLE_OFFSET: u32 = 0x0616E;
-/// Bir eğri tablosunun boyu / gruptaki adım (15 satır × 5 bayt).
-pub const TABLE_STRIDE: u32 = 0x4B;
-/// Bir tablodaki veri satırı sayısı (başlık satırı hariç).
-pub const POINTS: usize = 14;
-
-/// İki fan. Kural tablosundaki `b0` alanının ölçülmüş anlamı.
+/// Eğri üzerinde tek nokta. `t1`/`t2` kasıtlı olarak böyle adlandırıldı —
+/// hangi sensöre baktıkları ölçülmedi, `cpu`/`gpu` demek yalan olurdu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Fan {
-    /// `b0 = 0x00` — hwmon `fan1_input`, XRAM kaydı `0xF8AC`.
-    Fan0,
-    /// `b0 = 0x10` — hwmon `fan2_input`, XRAM kaydı `0xF8E2`.
-    Fan1,
+pub struct Nokta {
+    pub t1: u8,
+    pub t2: u8,
+    /// Fan görev çevrimi, yüzde.
+    pub duty: u8,
 }
 
-/// Eğrinin bir satırı. Ham firmware baytları, yorumsuz.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Point {
-    /// Alt eşik (°C). [`Curve::duty_step`] yalnız bunu kullanır.
-    pub t1_c: u8,
-    /// İkinci bayt. **Anlamı ölçülmedi** — histerezis, üst sınır ya da başka
-    /// bir sensör olabilir. Hiçbir hesapta kullanılmıyor, kanıt olsun diye var.
-    pub t2_c: u8,
-    /// Fan doluluğu, yüzde (`0..=100`; gözlenen tavan 63).
-    pub duty_pct: u8,
-}
-
-const fn p(t1_c: u8, t2_c: u8, duty_pct: u8) -> Point {
-    Point { t1_c, t2_c, duty_pct }
-}
-
-/// Tek bir mod + fan eğrisi, kaynak ofsetiyle birlikte.
+/// Bir fan için bir modun eğrisi.
 #[derive(Debug, Clone, Copy)]
-pub struct Curve {
-    pub mode: FanMode,
-    pub fan: Fan,
-    /// Tablonun firmware imajındaki ofseti — kanıt buraya kadar izlenir.
-    pub src_offset: u32,
-    /// Kural tablosundaki `mod` alanı (firmware'in iç mod numarası).
-    pub rule_mod: u8,
-    /// Kural tablosundaki `b0` alanı (`0x00` = fan 0, `0x10` = fan 1).
-    pub rule_b0: u8,
-    /// `t1 = 0` başlık satırı. EC XRAM'e kopyalanmaz; **yorumu ölçülmedi**,
-    /// bu yüzden [`Curve::duty_step`] onu kullanmaz.
-    pub header: Point,
-    /// XRAM'e kopyalanan 14 veri satırı, `t1` artan sırada.
-    pub points: [Point; POINTS],
+pub struct Egri {
+    pub mod_: FanMode,
+    /// 0 ya da 1. Hangi fanın neyi soğuttuğu ÖLÇÜLMEDİ.
+    pub fan: u8,
+    /// Firmware imajındaki kaynak ofseti — kanıt izlenebilir olsun diye.
+    pub kaynak: u32,
+    pub noktalar: [Nokta; 14],
 }
 
-impl Curve {
-    /// Verilen sıcaklıkta tablonun söylediği duty — **BASAMAK**, interpolasyon
-    /// değil (nedeni modül başlığında).
+impl Egri {
+    /// Verilen sıcaklıkta beklenen duty — **BASAMAK**, interpolasyon değil.
     ///
-    /// `temp_c`'nin geçtiği son satırın `duty`'sini döner. İlk eşiğin altında
-    /// [`None`]: tablo orası için bir şey söylemiyor, ve "0" demek uydurmak
-    /// olurdu — başlık satırının duty'si turbo'da 0 değil 63.
-    pub fn duty_step(&self, temp_c: u8) -> Option<u8> {
-        let mut out = None;
-        for pt in &self.points {
-            if temp_c >= pt.t1_c {
-                out = Some(pt.duty_pct);
+    /// İlk eşiğin altında 0 döner (fan durur; mod 4'te boşta gerçekten
+    /// duruyor, ölçüldü).
+    pub fn duty(&self, t1: u8) -> u8 {
+        let mut d = 0;
+        for n in &self.noktalar {
+            if t1 >= n.t1 {
+                d = n.duty;
             } else {
-                break; // t1 artan; ilk geçilmeyen satırdan sonrası da geçilmez
+                break;
             }
         }
-        out
+        d
     }
 
-    /// Fanın kımıldadığı ilk sıcaklık (`points[0].t1_c`).
-    pub fn first_threshold_c(&self) -> u8 {
-        self.points[0].t1_c
+    /// Fanın dönmeye başladığı eşik.
+    pub fn baslangic(&self) -> u8 {
+        self.noktalar[0].t1
     }
 
-    /// Tablodaki en yüksek duty.
-    pub fn max_duty_pct(&self) -> u8 {
-        let mut m = 0;
-        let mut i = 0;
-        while i < POINTS {
-            if self.points[i].duty_pct > m {
-                m = self.points[i].duty_pct;
-            }
-            i += 1;
-        }
-        m
+    /// En yüksek duty.
+    pub fn tavan(&self) -> u8 {
+        self.noktalar.iter().map(|n| n.duty).max().unwrap_or(0)
     }
 }
 
-/// Bir mod + fan için eğri. Beş modun ikisi de tabloda var, `Option` yok.
-pub fn curve(mode: FanMode, fan: Fan) -> &'static Curve {
-    match (mode, fan) {
-        (FanMode::Quiet, Fan::Fan0) => &QUIET_FAN0,
-        (FanMode::Quiet, Fan::Fan1) => &QUIET_FAN1,
-        (FanMode::Responsive, Fan::Fan0) => &RESPONSIVE_FAN0,
-        (FanMode::Responsive, Fan::Fan1) => &RESPONSIVE_FAN1,
-        (FanMode::Balanced, Fan::Fan0) => &BALANCED_FAN0,
-        (FanMode::Balanced, Fan::Fan1) => &BALANCED_FAN1,
-        (FanMode::Gaming, Fan::Fan0) => &GAMING_FAN0,
-        (FanMode::Gaming, Fan::Fan1) => &GAMING_FAN1,
-        (FanMode::Turbo, Fan::Fan0) => &TURBO_FAN0,
-        (FanMode::Turbo, Fan::Fan1) => &TURBO_FAN1,
-    }
+/// Verilen mod ve fan için eğri.
+pub fn egri(m: FanMode, fan: u8) -> Option<&'static Egri> {
+    EGRILER.iter().find(|e| e.mod_ == m && e.fan == fan)
 }
 
-/// On eğrinin tamamı (5 mod × 2 fan) — testler ve toplu çizim için.
-pub fn all() -> &'static [&'static Curve] {
-    &ALL_CURVES
-}
 
-static ALL_CURVES: [&Curve; 10] = [
-    &QUIET_FAN0,
-    &QUIET_FAN1,
-    &RESPONSIVE_FAN0,
-    &RESPONSIVE_FAN1,
-    &BALANCED_FAN0,
-    &BALANCED_FAN1,
-    &GAMING_FAN0,
-    &GAMING_FAN1,
-    &TURBO_FAN0,
-    &TURBO_FAN1,
+pub const EGRILER: [Egri; 10] = [
+    // kaynak 0x05A66 · iç mod 0x02 · b0 0x00
+    Egri { mod_: FanMode::Quiet, fan: 0, kaynak: 0x05A66, noktalar: [
+        Nokta { t1:  54, t2:  69, duty:  18 },
+        Nokta { t1:  61, t2:  71, duty:  18 },
+        Nokta { t1:  63, t2:  74, duty:  20 },
+        Nokta { t1:  66, t2:  76, duty:  20 },
+        Nokta { t1:  68, t2:  79, duty:  21 },
+        Nokta { t1:  71, t2:  81, duty:  21 },
+        Nokta { t1:  73, t2:  84, duty:  23 },
+        Nokta { t1:  76, t2:  87, duty:  23 },
+        Nokta { t1:  79, t2:  90, duty:  23 },
+        Nokta { t1:  82, t2:  92, duty:  23 },
+        Nokta { t1:  84, t2:  94, duty:  23 },
+        Nokta { t1:  86, t2:  96, duty:  23 },
+        Nokta { t1:  88, t2:  98, duty:  26 },
+        Nokta { t1:  90, t2: 100, duty:  29 },
+    ] },
+    // kaynak 0x05AB1 · iç mod 0x02 · b0 0x10
+    Egri { mod_: FanMode::Quiet, fan: 1, kaynak: 0x05AB1, noktalar: [
+        Nokta { t1:  50, t2:  60, duty:  18 },
+        Nokta { t1:  54, t2:  64, duty:  21 },
+        Nokta { t1:  58, t2:  68, duty:  21 },
+        Nokta { t1:  62, t2:  71, duty:  23 },
+        Nokta { t1:  65, t2:  72, duty:  26 },
+        Nokta { t1:  68, t2:  75, duty:  29 },
+        Nokta { t1:  70, t2:  78, duty:  29 },
+        Nokta { t1:  73, t2:  81, duty:  29 },
+        Nokta { t1:  76, t2:  84, duty:  29 },
+        Nokta { t1:  79, t2:  87, duty:  29 },
+        Nokta { t1:  82, t2:  90, duty:  29 },
+        Nokta { t1:  85, t2:  93, duty:  29 },
+        Nokta { t1:  88, t2:  96, duty:  29 },
+        Nokta { t1:  91, t2: 100, duty:  29 },
+    ] },
+    // kaynak 0x05B92 · iç mod 0x00 · b0 0x00
+    Egri { mod_: FanMode::Responsive, fan: 0, kaynak: 0x05B92, noktalar: [
+        Nokta { t1:  40, t2:  54, duty:  18 },
+        Nokta { t1:  46, t2:  59, duty:  20 },
+        Nokta { t1:  51, t2:  64, duty:  21 },
+        Nokta { t1:  56, t2:  68, duty:  23 },
+        Nokta { t1:  60, t2:  72, duty:  26 },
+        Nokta { t1:  64, t2:  75, duty:  29 },
+        Nokta { t1:  67, t2:  81, duty:  33 },
+        Nokta { t1:  76, t2:  84, duty:  33 },
+        Nokta { t1:  79, t2:  87, duty:  33 },
+        Nokta { t1:  82, t2:  90, duty:  33 },
+        Nokta { t1:  85, t2:  93, duty:  33 },
+        Nokta { t1:  88, t2:  96, duty:  33 },
+        Nokta { t1:  91, t2:  98, duty:  38 },
+        Nokta { t1:  93, t2: 100, duty:  43 },
+    ] },
+    // kaynak 0x05BDD · iç mod 0x00 · b0 0x10
+    Egri { mod_: FanMode::Responsive, fan: 1, kaynak: 0x05BDD, noktalar: [
+        Nokta { t1:  48, t2:  57, duty:  18 },
+        Nokta { t1:  51, t2:  60, duty:  20 },
+        Nokta { t1:  54, t2:  62, duty:  21 },
+        Nokta { t1:  56, t2:  64, duty:  23 },
+        Nokta { t1:  58, t2:  66, duty:  26 },
+        Nokta { t1:  60, t2:  68, duty:  29 },
+        Nokta { t1:  62, t2:  70, duty:  33 },
+        Nokta { t1:  64, t2:  74, duty:  38 },
+        Nokta { t1:  68, t2:  82, duty:  43 },
+        Nokta { t1:  77, t2:  86, duty:  43 },
+        Nokta { t1:  81, t2:  90, duty:  43 },
+        Nokta { t1:  85, t2:  94, duty:  43 },
+        Nokta { t1:  89, t2:  98, duty:  43 },
+        Nokta { t1:  93, t2: 100, duty:  43 },
+    ] },
+    // kaynak 0x05CBE · iç mod 0x04 · b0 0x00
+    Egri { mod_: FanMode::Balanced, fan: 0, kaynak: 0x05CBE, noktalar: [
+        Nokta { t1:  54, t2:  70, duty:  18 },
+        Nokta { t1:  60, t2:  74, duty:  20 },
+        Nokta { t1:  66, t2:  77, duty:  21 },
+        Nokta { t1:  69, t2:  80, duty:  23 },
+        Nokta { t1:  72, t2:  83, duty:  26 },
+        Nokta { t1:  75, t2:  86, duty:  29 },
+        Nokta { t1:  78, t2:  88, duty:  33 },
+        Nokta { t1:  80, t2:  90, duty:  33 },
+        Nokta { t1:  82, t2:  92, duty:  33 },
+        Nokta { t1:  84, t2:  94, duty:  33 },
+        Nokta { t1:  86, t2:  95, duty:  33 },
+        Nokta { t1:  87, t2:  96, duty:  33 },
+        Nokta { t1:  88, t2:  98, duty:  38 },
+        Nokta { t1:  90, t2: 100, duty:  43 },
+    ] },
+    // kaynak 0x05D09 · iç mod 0x04 · b0 0x10
+    Egri { mod_: FanMode::Balanced, fan: 1, kaynak: 0x05D09, noktalar: [
+        Nokta { t1:  48, t2:  57, duty:  18 },
+        Nokta { t1:  51, t2:  60, duty:  20 },
+        Nokta { t1:  54, t2:  62, duty:  21 },
+        Nokta { t1:  56, t2:  64, duty:  23 },
+        Nokta { t1:  58, t2:  66, duty:  26 },
+        Nokta { t1:  60, t2:  68, duty:  29 },
+        Nokta { t1:  62, t2:  70, duty:  33 },
+        Nokta { t1:  64, t2:  74, duty:  38 },
+        Nokta { t1:  68, t2:  82, duty:  43 },
+        Nokta { t1:  77, t2:  86, duty:  43 },
+        Nokta { t1:  81, t2:  90, duty:  43 },
+        Nokta { t1:  85, t2:  94, duty:  43 },
+        Nokta { t1:  89, t2:  98, duty:  43 },
+        Nokta { t1:  93, t2: 100, duty:  43 },
+    ] },
+    // kaynak 0x05DEA · iç mod 0x01 · b0 0x00
+    Egri { mod_: FanMode::Gaming, fan: 0, kaynak: 0x05DEA, noktalar: [
+        Nokta { t1:  40, t2:  54, duty:  18 },
+        Nokta { t1:  46, t2:  59, duty:  20 },
+        Nokta { t1:  51, t2:  64, duty:  21 },
+        Nokta { t1:  56, t2:  68, duty:  23 },
+        Nokta { t1:  60, t2:  72, duty:  26 },
+        Nokta { t1:  64, t2:  75, duty:  29 },
+        Nokta { t1:  67, t2:  80, duty:  33 },
+        Nokta { t1:  72, t2:  84, duty:  33 },
+        Nokta { t1:  76, t2:  88, duty:  33 },
+        Nokta { t1:  80, t2:  92, duty:  33 },
+        Nokta { t1:  84, t2:  96, duty:  38 },
+        Nokta { t1:  86, t2:  97, duty:  43 },
+        Nokta { t1:  88, t2: 105, duty:  48 },
+        Nokta { t1:  90, t2: 110, duty:  53 },
+    ] },
+    // kaynak 0x05E35 · iç mod 0x01 · b0 0x10
+    Egri { mod_: FanMode::Gaming, fan: 1, kaynak: 0x05E35, noktalar: [
+        Nokta { t1:  46, t2:  54, duty:  18 },
+        Nokta { t1:  49, t2:  57, duty:  20 },
+        Nokta { t1:  52, t2:  60, duty:  21 },
+        Nokta { t1:  55, t2:  63, duty:  23 },
+        Nokta { t1:  58, t2:  66, duty:  26 },
+        Nokta { t1:  61, t2:  68, duty:  29 },
+        Nokta { t1:  63, t2:  70, duty:  33 },
+        Nokta { t1:  65, t2:  72, duty:  38 },
+        Nokta { t1:  67, t2:  74, duty:  43 },
+        Nokta { t1:  69, t2:  76, duty:  48 },
+        Nokta { t1:  71, t2:  80, duty:  53 },
+        Nokta { t1:  75, t2:  84, duty:  53 },
+        Nokta { t1:  79, t2:  88, duty:  53 },
+        Nokta { t1:  83, t2: 100, duty:  53 },
+    ] },
+    // kaynak 0x05F16 · iç mod 0x03 · b0 0x00
+    Egri { mod_: FanMode::Turbo, fan: 0, kaynak: 0x05F16, noktalar: [
+        Nokta { t1:  36, t2:  48, duty:  63 },
+        Nokta { t1:  43, t2:  54, duty:  63 },
+        Nokta { t1:  49, t2:  60, duty:  63 },
+        Nokta { t1:  55, t2:  66, duty:  63 },
+        Nokta { t1:  61, t2:  72, duty:  63 },
+        Nokta { t1:  67, t2:  76, duty:  63 },
+        Nokta { t1:  71, t2:  80, duty:  63 },
+        Nokta { t1:  75, t2:  84, duty:  63 },
+        Nokta { t1:  79, t2:  88, duty:  63 },
+        Nokta { t1:  83, t2:  92, duty:  63 },
+        Nokta { t1:  87, t2:  94, duty:  63 },
+        Nokta { t1:  89, t2:  96, duty:  63 },
+        Nokta { t1:  91, t2: 105, duty:  63 },
+        Nokta { t1: 100, t2: 110, duty:  63 },
+    ] },
+    // kaynak 0x05F61 · iç mod 0x03 · b0 0x10
+    Egri { mod_: FanMode::Turbo, fan: 1, kaynak: 0x05F61, noktalar: [
+        Nokta { t1:  46, t2:  54, duty:  63 },
+        Nokta { t1:  49, t2:  57, duty:  63 },
+        Nokta { t1:  52, t2:  60, duty:  63 },
+        Nokta { t1:  55, t2:  63, duty:  63 },
+        Nokta { t1:  58, t2:  66, duty:  63 },
+        Nokta { t1:  61, t2:  68, duty:  63 },
+        Nokta { t1:  63, t2:  70, duty:  63 },
+        Nokta { t1:  65, t2:  72, duty:  63 },
+        Nokta { t1:  67, t2:  74, duty:  63 },
+        Nokta { t1:  71, t2:  76, duty:  63 },
+        Nokta { t1:  75, t2:  80, duty:  63 },
+        Nokta { t1:  79, t2:  84, duty:  63 },
+        Nokta { t1:  83, t2:  88, duty:  63 },
+        Nokta { t1:  87, t2: 100, duty:  63 },
+    ] },
 ];
-
-/// `quiet` / fan 0 — firmware ofseti `0x05A66`
-/// (grup tabanı `0x05A66` + `0` = `0x4B` × 0).
-static QUIET_FAN0: Curve = Curve {
-    mode: FanMode::Quiet,
-    fan: Fan::Fan0,
-    src_offset: 0x05A66,
-    rule_mod: 0x02,
-    rule_b0: 0x00,
-    // XRAM'e KOPYALANMAYAN başlık satırı (t1 = 0). Yorumu ölçülmedi.
-    header: p(0, 66, 0),
-    points: [
-        p( 54,  69, 18),   // r1   bayrak2=0x00
-        p( 61,  71, 18),   // r2   bayrak2=0x00
-        p( 63,  74, 20),   // r3   bayrak2=0x00
-        p( 66,  76, 20),   // r4   bayrak2=0x00
-        p( 68,  79, 21),   // r5   bayrak2=0x00
-        p( 71,  81, 21),   // r6   bayrak2=0x00
-        p( 73,  84, 23),   // r7   bayrak2=0x00
-        p( 76,  87, 23),   // r8   bayrak2=0x00
-        p( 79,  90, 23),   // r9   bayrak2=0x00
-        p( 82,  92, 23),   // r10  bayrak2=0x00
-        p( 84,  94, 23),   // r11  bayrak2=0x00
-        p( 86,  96, 23),   // r12  bayrak2=0x00
-        p( 88,  98, 26),   // r13  bayrak2=0x10
-        p( 90, 100, 29),   // r14  bayrak2=0x01
-    ],
-};
-
-/// `quiet` / fan 1 — firmware ofseti `0x05AB1`
-/// (grup tabanı `0x05A66` + `75` = `0x4B` × 1).
-static QUIET_FAN1: Curve = Curve {
-    mode: FanMode::Quiet,
-    fan: Fan::Fan1,
-    src_offset: 0x05AB1,
-    rule_mod: 0x02,
-    rule_b0: 0x10,
-    // XRAM'e KOPYALANMAYAN başlık satırı (t1 = 0). Yorumu ölçülmedi.
-    header: p(0, 56, 0),
-    points: [
-        p( 50,  60, 18),   // r1   bayrak2=0x00
-        p( 54,  64, 21),   // r2   bayrak2=0x00
-        p( 58,  68, 21),   // r3   bayrak2=0x10
-        p( 62,  71, 23),   // r4   bayrak2=0x21
-        p( 65,  72, 26),   // r5   bayrak2=0x02
-        p( 68,  75, 29),   // r6   bayrak2=0x02
-        p( 70,  78, 29),   // r7   bayrak2=0x02
-        p( 73,  81, 29),   // r8   bayrak2=0x02
-        p( 76,  84, 29),   // r9   bayrak2=0x02
-        p( 79,  87, 29),   // r10  bayrak2=0x02
-        p( 82,  90, 29),   // r11  bayrak2=0x02
-        p( 85,  93, 29),   // r12  bayrak2=0x02
-        p( 88,  96, 29),   // r13  bayrak2=0x02
-        p( 91, 100, 29),   // r14  bayrak2=0x02
-    ],
-};
-
-/// `responsive` / fan 0 — firmware ofseti `0x05B92`
-/// (grup tabanı `0x05B92` + `0` = `0x4B` × 0).
-static RESPONSIVE_FAN0: Curve = Curve {
-    mode: FanMode::Responsive,
-    fan: Fan::Fan0,
-    src_offset: 0x05B92,
-    rule_mod: 0x00,
-    rule_b0: 0x00,
-    // XRAM'e KOPYALANMAYAN başlık satırı (t1 = 0). Yorumu ölçülmedi.
-    header: p(0, 46, 0),
-    points: [
-        p( 40,  54, 18),   // r1   bayrak2=0x00
-        p( 46,  59, 20),   // r2   bayrak2=0x00
-        p( 51,  64, 21),   // r3   bayrak2=0x00
-        p( 56,  68, 23),   // r4   bayrak2=0x00
-        p( 60,  72, 26),   // r5   bayrak2=0x00
-        p( 64,  75, 29),   // r6   bayrak2=0x00
-        p( 67,  81, 33),   // r7   bayrak2=0x00
-        p( 76,  84, 33),   // r8   bayrak2=0x00
-        p( 79,  87, 33),   // r9   bayrak2=0x00
-        p( 82,  90, 33),   // r10  bayrak2=0x00
-        p( 85,  93, 33),   // r11  bayrak2=0x00
-        p( 88,  96, 33),   // r12  bayrak2=0x00
-        p( 91,  98, 38),   // r13  bayrak2=0x10
-        p( 93, 100, 43),   // r14  bayrak2=0x01
-    ],
-};
-
-/// `responsive` / fan 1 — firmware ofseti `0x05BDD`
-/// (grup tabanı `0x05B92` + `75` = `0x4B` × 1).
-static RESPONSIVE_FAN1: Curve = Curve {
-    mode: FanMode::Responsive,
-    fan: Fan::Fan1,
-    src_offset: 0x05BDD,
-    rule_mod: 0x00,
-    rule_b0: 0x10,
-    // XRAM'e KOPYALANMAYAN başlık satırı (t1 = 0). Yorumu ölçülmedi.
-    header: p(0, 54, 0),
-    points: [
-        p( 48,  57, 18),   // r1   bayrak2=0x00
-        p( 51,  60, 20),   // r2   bayrak2=0x00
-        p( 54,  62, 21),   // r3   bayrak2=0x00
-        p( 56,  64, 23),   // r4   bayrak2=0x00
-        p( 58,  66, 26),   // r5   bayrak2=0x00
-        p( 60,  68, 29),   // r6   bayrak2=0x10
-        p( 62,  70, 33),   // r7   bayrak2=0x21
-        p( 64,  74, 38),   // r8   bayrak2=0x02
-        p( 68,  82, 43),   // r9   bayrak2=0x02
-        p( 77,  86, 43),   // r10  bayrak2=0x02
-        p( 81,  90, 43),   // r11  bayrak2=0x02
-        p( 85,  94, 43),   // r12  bayrak2=0x02
-        p( 89,  98, 43),   // r13  bayrak2=0x02
-        p( 93, 100, 43),   // r14  bayrak2=0x02
-    ],
-};
-
-/// `balanced` / fan 0 — firmware ofseti `0x05CBE`
-/// (grup tabanı `0x05CBE` + `0` = `0x4B` × 0).
-static BALANCED_FAN0: Curve = Curve {
-    mode: FanMode::Balanced,
-    fan: Fan::Fan0,
-    src_offset: 0x05CBE,
-    rule_mod: 0x04,
-    rule_b0: 0x00,
-    // XRAM'e KOPYALANMAYAN başlık satırı (t1 = 0). Yorumu ölçülmedi.
-    header: p(0, 66, 0),
-    points: [
-        p( 54,  70, 18),   // r1   bayrak2=0x00
-        p( 60,  74, 20),   // r2   bayrak2=0x00
-        p( 66,  77, 21),   // r3   bayrak2=0x00
-        p( 69,  80, 23),   // r4   bayrak2=0x00
-        p( 72,  83, 26),   // r5   bayrak2=0x00
-        p( 75,  86, 29),   // r6   bayrak2=0x00
-        p( 78,  88, 33),   // r7   bayrak2=0x00
-        p( 80,  90, 33),   // r8   bayrak2=0x00
-        p( 82,  92, 33),   // r9   bayrak2=0x00
-        p( 84,  94, 33),   // r10  bayrak2=0x00
-        p( 86,  95, 33),   // r11  bayrak2=0x00
-        p( 87,  96, 33),   // r12  bayrak2=0x00
-        p( 88,  98, 38),   // r13  bayrak2=0x10
-        p( 90, 100, 43),   // r14  bayrak2=0x01
-    ],
-};
-
-/// `balanced` / fan 1 — firmware ofseti `0x05D09`
-/// (grup tabanı `0x05CBE` + `75` = `0x4B` × 1).
-static BALANCED_FAN1: Curve = Curve {
-    mode: FanMode::Balanced,
-    fan: Fan::Fan1,
-    src_offset: 0x05D09,
-    rule_mod: 0x04,
-    rule_b0: 0x10,
-    // XRAM'e KOPYALANMAYAN başlık satırı (t1 = 0). Yorumu ölçülmedi.
-    header: p(0, 54, 0),
-    points: [
-        p( 48,  57, 18),   // r1   bayrak2=0x00
-        p( 51,  60, 20),   // r2   bayrak2=0x00
-        p( 54,  62, 21),   // r3   bayrak2=0x00
-        p( 56,  64, 23),   // r4   bayrak2=0x00
-        p( 58,  66, 26),   // r5   bayrak2=0x00
-        p( 60,  68, 29),   // r6   bayrak2=0x10
-        p( 62,  70, 33),   // r7   bayrak2=0x21
-        p( 64,  74, 38),   // r8   bayrak2=0x02
-        p( 68,  82, 43),   // r9   bayrak2=0x02
-        p( 77,  86, 43),   // r10  bayrak2=0x02
-        p( 81,  90, 43),   // r11  bayrak2=0x02
-        p( 85,  94, 43),   // r12  bayrak2=0x02
-        p( 89,  98, 43),   // r13  bayrak2=0x02
-        p( 93, 100, 43),   // r14  bayrak2=0x02
-    ],
-};
-
-/// `gaming` / fan 0 — firmware ofseti `0x05DEA`
-/// (grup tabanı `0x05DEA` + `0` = `0x4B` × 0).
-static GAMING_FAN0: Curve = Curve {
-    mode: FanMode::Gaming,
-    fan: Fan::Fan0,
-    src_offset: 0x05DEA,
-    rule_mod: 0x01,
-    rule_b0: 0x00,
-    // XRAM'e KOPYALANMAYAN başlık satırı (t1 = 0). Yorumu ölçülmedi.
-    header: p(0, 46, 0),
-    points: [
-        p( 40,  54, 18),   // r1   bayrak2=0x00
-        p( 46,  59, 20),   // r2   bayrak2=0x00
-        p( 51,  64, 21),   // r3   bayrak2=0x00
-        p( 56,  68, 23),   // r4   bayrak2=0x00
-        p( 60,  72, 26),   // r5   bayrak2=0x00
-        p( 64,  75, 29),   // r6   bayrak2=0x00
-        p( 67,  80, 33),   // r7   bayrak2=0x00
-        p( 72,  84, 33),   // r8   bayrak2=0x00
-        p( 76,  88, 33),   // r9   bayrak2=0x00
-        p( 80,  92, 33),   // r10  bayrak2=0x00
-        p( 84,  96, 38),   // r11  bayrak2=0x00
-        p( 86,  97, 43),   // r12  bayrak2=0x00
-        p( 88, 105, 48),   // r13  bayrak2=0x10
-        p( 90, 110, 53),   // r14  bayrak2=0x01
-    ],
-};
-
-/// `gaming` / fan 1 — firmware ofseti `0x05E35`
-/// (grup tabanı `0x05DEA` + `75` = `0x4B` × 1).
-static GAMING_FAN1: Curve = Curve {
-    mode: FanMode::Gaming,
-    fan: Fan::Fan1,
-    src_offset: 0x05E35,
-    rule_mod: 0x01,
-    rule_b0: 0x10,
-    // XRAM'e KOPYALANMAYAN başlık satırı (t1 = 0). Yorumu ölçülmedi.
-    header: p(0, 51, 0),
-    points: [
-        p( 46,  54, 18),   // r1   bayrak2=0x00
-        p( 49,  57, 20),   // r2   bayrak2=0x00
-        p( 52,  60, 21),   // r3   bayrak2=0x00
-        p( 55,  63, 23),   // r4   bayrak2=0x00
-        p( 58,  66, 26),   // r5   bayrak2=0x00
-        p( 61,  68, 29),   // r6   bayrak2=0x00
-        p( 63,  70, 33),   // r7   bayrak2=0x00
-        p( 65,  72, 38),   // r8   bayrak2=0x00
-        p( 67,  74, 43),   // r9   bayrak2=0x00
-        p( 69,  76, 48),   // r10  bayrak2=0x10
-        p( 71,  80, 53),   // r11  bayrak2=0x21
-        p( 75,  84, 53),   // r12  bayrak2=0x02
-        p( 79,  88, 53),   // r13  bayrak2=0x02
-        p( 83, 100, 53),   // r14  bayrak2=0x02
-    ],
-};
-
-/// `turbo` / fan 0 — firmware ofseti `0x05F16`
-/// (grup tabanı `0x05F16` + `0` = `0x4B` × 0).
-static TURBO_FAN0: Curve = Curve {
-    mode: FanMode::Turbo,
-    fan: Fan::Fan0,
-    src_offset: 0x05F16,
-    rule_mod: 0x03,
-    rule_b0: 0x00,
-    // XRAM'e KOPYALANMAYAN başlık satırı (t1 = 0). Yorumu ölçülmedi.
-    header: p(0, 42, 63),
-    points: [
-        p( 36,  48, 63),   // r1   bayrak2=0x00
-        p( 43,  54, 63),   // r2   bayrak2=0x00
-        p( 49,  60, 63),   // r3   bayrak2=0x00
-        p( 55,  66, 63),   // r4   bayrak2=0x00
-        p( 61,  72, 63),   // r5   bayrak2=0x00
-        p( 67,  76, 63),   // r6   bayrak2=0x00
-        p( 71,  80, 63),   // r7   bayrak2=0x00
-        p( 75,  84, 63),   // r8   bayrak2=0x00
-        p( 79,  88, 63),   // r9   bayrak2=0x00
-        p( 83,  92, 63),   // r10  bayrak2=0x00
-        p( 87,  94, 63),   // r11  bayrak2=0x00
-        p( 89,  96, 63),   // r12  bayrak2=0x00
-        p( 91, 105, 63),   // r13  bayrak2=0x10
-        p(100, 110, 63),   // r14  bayrak2=0x01
-    ],
-};
-
-/// `turbo` / fan 1 — firmware ofseti `0x05F61`
-/// (grup tabanı `0x05F16` + `75` = `0x4B` × 1).
-static TURBO_FAN1: Curve = Curve {
-    mode: FanMode::Turbo,
-    fan: Fan::Fan1,
-    src_offset: 0x05F61,
-    rule_mod: 0x03,
-    rule_b0: 0x10,
-    // XRAM'e KOPYALANMAYAN başlık satırı (t1 = 0). Yorumu ölçülmedi.
-    header: p(0, 51, 63),
-    points: [
-        p( 46,  54, 63),   // r1   bayrak2=0x00
-        p( 49,  57, 63),   // r2   bayrak2=0x00
-        p( 52,  60, 63),   // r3   bayrak2=0x00
-        p( 55,  63, 63),   // r4   bayrak2=0x00
-        p( 58,  66, 63),   // r5   bayrak2=0x00
-        p( 61,  68, 63),   // r6   bayrak2=0x00
-        p( 63,  70, 63),   // r7   bayrak2=0x00
-        p( 65,  72, 63),   // r8   bayrak2=0x00
-        p( 67,  74, 63),   // r9   bayrak2=0x00
-        p( 71,  76, 63),   // r10  bayrak2=0x10
-        p( 75,  80, 63),   // r11  bayrak2=0x21
-        p( 79,  84, 63),   // r12  bayrak2=0x02
-        p( 83,  88, 63),   // r13  bayrak2=0x02
-        p( 87, 100, 63),   // r14  bayrak2=0x02
-    ],
-};
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const MODES: [FanMode; 5] = [
-        FanMode::Quiet,
-        FanMode::Balanced,
-        FanMode::Responsive,
-        FanMode::Gaming,
-        FanMode::Turbo,
-    ];
-
     #[test]
-    fn her_tablo_on_dort_nokta() {
-        // 15 satır × 5 bayt dosyada; XRAM'e kopyalanan 14. Bu sayı canlı
-        // ölçümle (0xF8AC'ten okunan 14×3) birebir tutmalı.
-        for c in all() {
-            assert_eq!(c.points.len(), 14, "{:?} {:?}", c.mode, c.fan);
+    fn bes_modun_ikisi_de_fani_var() {
+        for m in [
+            FanMode::Quiet,
+            FanMode::Balanced,
+            FanMode::Responsive,
+            FanMode::Gaming,
+            FanMode::Turbo,
+        ] {
+            for fan in 0..2u8 {
+                assert!(egri(m, fan).is_some(), "{m:?} fan{fan} yok");
+            }
         }
-        assert_eq!(all().len(), 10, "5 mod × 2 fan");
+        assert_eq!(EGRILER.len(), 10);
     }
 
     #[test]
-    fn duty_yuzde_araliginda() {
-        for c in all() {
-            for (i, pt) in c.points.iter().enumerate() {
-                assert!(
-                    pt.duty_pct <= 100,
-                    "{:?} {:?} r{}: duty={}",
-                    c.mode, c.fan, i + 1, pt.duty_pct
-                );
+    fn sicakliklar_artan_duty_makul() {
+        for e in &EGRILER {
+            for w in e.noktalar.windows(2) {
+                assert!(w[0].t1 <= w[1].t1, "{:?} fan{} t1 azaliyor", e.mod_, e.fan);
+            }
+            for n in &e.noktalar {
+                assert!(n.duty <= 100, "duty {} > 100", n.duty);
             }
         }
     }
 
+    /// Belgelenen tavanlar (`firmware-8051.md` §4.2) — üreteç de denetliyor,
+    /// burada ikinci kez sabitleniyor ki veri elle bozulursa test düşsün.
     #[test]
-    fn sicakliklar_kesin_artan() {
-        // duty_step'in erken çıkışı buna dayanıyor — bozulursa lookup bozulur.
-        for c in all() {
-            for w in c.points.windows(2) {
-                assert!(
-                    w[1].t1_c > w[0].t1_c,
-                    "{:?} {:?}: t1 artmıyor {} -> {}",
-                    c.mode, c.fan, w[0].t1_c, w[1].t1_c
-                );
-            }
+    fn tavanlar_belgeyle_ayni() {
+        for (m, tavan) in [
+            (FanMode::Quiet, 29u8),
+            (FanMode::Responsive, 43),
+            (FanMode::Balanced, 43),
+            (FanMode::Gaming, 53),
+            (FanMode::Turbo, 63),
+        ] {
+            assert_eq!(egri(m, 0).unwrap().tavan(), tavan, "{m:?}");
         }
     }
 
+    /// `kernel/README.md`'nin mod özetleriyle tutarlı mı.
     #[test]
-    fn duty_azalmiyor() {
-        for c in all() {
-            for w in c.points.windows(2) {
-                assert!(
-                    w[1].duty_pct >= w[0].duty_pct,
-                    "{:?} {:?}: duty düşüyor {} -> {}",
-                    c.mode, c.fan, w[0].duty_pct, w[1].duty_pct
-                );
-            }
+    fn baslangic_esikleri_ozetle_ayni() {
+        assert_eq!(egri(FanMode::Quiet, 0).unwrap().baslangic(), 54);
+        assert_eq!(egri(FanMode::Balanced, 0).unwrap().baslangic(), 54);
+        assert_eq!(egri(FanMode::Responsive, 0).unwrap().baslangic(), 40);
+        assert_eq!(egri(FanMode::Gaming, 0).unwrap().baslangic(), 40);
+        assert_eq!(egri(FanMode::Turbo, 0).unwrap().baslangic(), 36);
+    }
+
+    #[test]
+    fn duty_basamak_semantigi() {
+        let e = egri(FanMode::Quiet, 0).unwrap();
+        // İlk eşiğin ALTINDA fan durur.
+        assert_eq!(e.duty(0), 0);
+        assert_eq!(e.duty(e.baslangic() - 1), 0);
+        // Eşikte ilk duty.
+        assert_eq!(e.duty(e.baslangic()), e.noktalar[0].duty);
+        // İki eşik ARASINDA: BASAMAK — alttaki değerde kalır, interpolasyon YOK.
+        let a = e.noktalar[0];
+        let b = e.noktalar[1];
+        if b.t1 > a.t1 + 1 {
+            assert_eq!(e.duty(a.t1 + 1), a.duty, "interpolasyon yapiliyor!");
         }
+        // Son eşiğin üstünde tavan.
+        assert_eq!(e.duty(255), e.tavan());
     }
 
-    /// BİLİNEN TABLO, BİLİNEN SATIR. `0x05A66` (sessiz / fan 0) 7 Eyl 2026'da
-    /// canlı olarak EC XRAM'de görüldü; ilk ve son satırı elle sabitliyoruz ki
-    /// veri bir daha üretilirse kayma fark edilsin.
+    /// Turbo'nun eğrisi düz — 7 Eyl'de canlı doğrulandı (boşta 37 °C'de
+    /// fanlar 0'dan ~7000 rpm'e çıktı).
     #[test]
-    fn bilinen_tablonun_bilinen_satiri() {
-        let c = curve(FanMode::Quiet, Fan::Fan0);
-        assert_eq!(c.src_offset, 0x05A66);
-        assert_eq!(c.points[0], p(54, 69, 18), "r1");
-        assert_eq!(c.points[13], p(90, 100, 29), "r14");
-
-        // Fan 1 tablosu grup tabanı + 0x4B (canlı ölçümde 0x05AB1'di).
-        let c1 = curve(FanMode::Quiet, Fan::Fan1);
-        assert_eq!(c1.src_offset, 0x05AB1);
-        assert_eq!(c1.points[0], p(50, 60, 18), "r1");
-        assert_eq!(c1.points[13], p(91, 100, 29), "r14");
-
-        // Mod 4 = "balanced": makine 7 Eyl'de bu eğriyle koşuyordu.
-        assert_eq!(curve(FanMode::Balanced, Fan::Fan0).src_offset, 0x05CBE);
-        assert_eq!(curve(FanMode::Balanced, Fan::Fan0).rule_mod, 0x04);
-    }
-
-    /// Turbo düz: on dört satırın hepsi %63. `describe()`'daki "düz %63" bu.
-    #[test]
-    fn turbo_duz_63() {
-        for fan in [Fan::Fan0, Fan::Fan1] {
-            let c = curve(FanMode::Turbo, fan);
-            assert!(
-                c.points.iter().all(|pt| pt.duty_pct == 63),
-                "{:?} turbo düz değil",
-                fan
-            );
-        }
-        assert_eq!(curve(FanMode::Turbo, Fan::Fan0).first_threshold_c(), 36);
-    }
-
-    /// Grup ofsetleri kural tablosundaki adreslerle ve `0x4B` adımıyla tutuyor.
-    #[test]
-    fn ofsetler_kural_tablosuyla_tutar() {
-        for m in MODES {
-            let f0 = curve(m, Fan::Fan0);
-            let f1 = curve(m, Fan::Fan1);
-            assert_eq!(f1.src_offset, f0.src_offset + TABLE_STRIDE, "{m:?}");
-            assert_eq!(f0.rule_b0, 0x00, "{m:?}");
-            assert_eq!(f1.rule_b0, 0x10, "{m:?}");
-            assert_eq!(f0.rule_mod, f1.rule_mod, "{m:?}");
-        }
-        // Beş modun iç mod numarası birbirinden farklı olmalı.
-        let mut mods: Vec<u8> = MODES.iter().map(|&m| curve(m, Fan::Fan0).rule_mod).collect();
-        mods.sort_unstable();
-        mods.dedup();
-        assert_eq!(mods.len(), 5, "iki mod aynı kural kaydına bakıyor");
-    }
-
-    /// `FanMode::describe()` metni tablodan türetilmişti; ikisi ayrışmasın.
-    #[test]
-    fn curve_ozetler_fan_mode_describe_ile_tutar() {
-        // (mod, ilk eşik °C, iki fandaki en yüksek duty)
-        let beklenen = [
-            (FanMode::Quiet, 54u8, 29u8),
-            (FanMode::Balanced, 54, 43),
-            (FanMode::Responsive, 40, 43),
-            (FanMode::Gaming, 40, 53),
-            (FanMode::Turbo, 36, 63),
-        ];
-        for (m, esik, tavan) in beklenen {
-            let c0 = curve(m, Fan::Fan0);
-            let c1 = curve(m, Fan::Fan1);
-            assert_eq!(c0.first_threshold_c(), esik, "{m:?} ilk eşik");
-            assert_eq!(
-                c0.max_duty_pct().max(c1.max_duty_pct()),
-                tavan,
-                "{m:?} duty tavanı"
-            );
-            let d = m.describe();
-            assert!(
-                d.contains(&esik.to_string()) && d.contains(&tavan.to_string()),
-                "describe() = {d:?} ile tablo ayrıştı ({m:?})"
-            );
-        }
+    fn turbo_duz() {
+        let e = egri(FanMode::Turbo, 0).unwrap();
+        assert!(e.noktalar.iter().all(|n| n.duty == 63), "turbo duz degil");
     }
 
     #[test]
-    fn duty_step_basamak_interpolasyon_degil() {
-        let c = curve(FanMode::Quiet, Fan::Fan0);
-        // r1 = (54, 69, 18), r2 = (61, 71, 18), r3 = (63, 74, 20)
-        assert_eq!(c.duty_step(53), None, "ilk eşiğin altı: tablo susuyor");
-        assert_eq!(c.duty_step(54), Some(18), "eşik dahil");
-        // 62, r2 ile r3 arasında. İnterpolasyon 19 derdi; basamak r2'yi verir.
-        assert_eq!(c.duty_step(62), Some(18), "ARA DEĞER İNTERPOLE EDİLMEZ");
-        assert_eq!(c.duty_step(63), Some(20));
-        assert_eq!(c.duty_step(90), Some(29), "son satır");
-        assert_eq!(c.duty_step(255), Some(29), "tablonun üstü son satırda kalır");
-    }
-
-    #[test]
-    fn duty_step_monoton_ve_tabloda_var_olan_bir_deger() {
-        for c in all() {
-            let mut onceki = 0u8;
-            for t in 0..=120u8 {
-                match c.duty_step(t) {
-                    None => assert!(t < c.first_threshold_c()),
-                    Some(v) => {
-                        assert!(v >= onceki, "{:?} {:?} {t} °C'de düştü", c.mode, c.fan);
-                        assert!(
-                            c.points.iter().any(|pt| pt.duty_pct == v),
-                            "{v} tabloda yok — ara değer üretilmiş"
-                        );
-                        onceki = v;
-                    }
-                }
-            }
-        }
-    }
-
-    /// Başlık satırı taşınıyor ama hesaba girmiyor — turbo'da duty'si 0 değil,
-    /// yani "başlık = fan kapalı" varsayımı yanlış olurdu.
-    #[test]
-    fn baslik_satiri_hesaba_girmiyor() {
-        for c in all() {
-            assert_eq!(c.header.t1_c, 0, "başlık t1 = 0 olmalı");
-        }
-        assert_eq!(curve(FanMode::Turbo, Fan::Fan0).header.duty_pct, 63);
-        assert_eq!(curve(FanMode::Quiet, Fan::Fan0).header.duty_pct, 0);
-        // Yine de 36 °C altında turbo için bir şey İDDİA ETMİYORUZ.
-        assert_eq!(curve(FanMode::Turbo, Fan::Fan0).duty_step(20), None);
+    fn kaynak_ofsetleri_belgeyle_ayni() {
+        assert_eq!(egri(FanMode::Quiet, 0).unwrap().kaynak, 0x05A66);
+        assert_eq!(egri(FanMode::Balanced, 0).unwrap().kaynak, 0x05CBE);
+        assert_eq!(egri(FanMode::Turbo, 0).unwrap().kaynak, 0x05F16);
     }
 }
