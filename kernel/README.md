@@ -405,6 +405,59 @@ Bu hatayı yalnız bir reboot bulabilirdi: elle yüklenirken `BAT1` her zaman
 saatlerdir oradaydı. **Ağaç-dışı sürücüde "elle `insmod` ile çalıştı" bir
 doğrulama değildir.**
 
+## ⛔ debugfs eğri okuyucusu — UYGULANAMADI, ve sebebi K2'ye bağlı
+
+`surucu-tasarim.md` §3.7 salt okunur bir debugfs eğri okuyucusu öngörüyor
+(`fan/curve0`, `fan/curve1`). **Yazılmadı.** Sebep DSDT'den doğrulandı
+(8 Eyl 2026):
+
+**1. Hiçbir `WMBC` seçicisi `EIDR`/`ERCD`'ye ulaşmıyor.** Kataloğun 39 okuma
+seçicisinin hepsi isimli bir `PECM`/`ECMM` alanını ya da bir CMOS indeksini
+okuyor; keyfi 16 bit indeks alan yok. Yani sürücünün üç `wmi_driver`'lık
+yüzeyinden eğrilere giden bir yol YOK.
+
+**2. `EIDR` doğrudan çağrılabilir ama zaman aşımı GÖRÜLEMİYOR.** DSDT 8423'te
+`EIDR` ve 8117'de `FANG` sarmalayıcısı var; `acpi_evaluate_integer` ile mutlak
+yoldan çağrılabilirdi. Asıl engel `ECTE`:
+
+```
+$ grep -n ECTE dsdt.dsl.txt
+8446:  ECTE, 1,                                    <- alan tanımı
+8496:  ECTE = One                                  <- ERCD içinde KURMA
+8497:  While (((ESRC != Zero) && (ECTE != Zero)))  <- ERCD içinde YOKLAMA
+```
+
+Üçü de `ERCD`'nin **kendi gövdesinde**. `ECTE`'yi okuyup döndüren tek bir ACPI
+metodu yok. Ve `ERCD` zaman aşımını **bildirmiyor** — 100×10 ms dolsa bile
+`ERN1..8`'i aynen döndürüyor:
+
+```asl
+ECTE = One
+While (((ESRC != Zero) && (ECTE != Zero))) { Sleep (0x0A); ESRC -= One }
+Local0 = Buffer (0x08){}          <- ESRC bittiyse de buraya düşüyor
+Local0 [Zero] = ERN1 ...          <- BAYAT veri, geçerli cevaptan ayırt edilemez
+Return (Local0)
+```
+
+Yani çekirdekten `EIDR` çağırınca elde 8 bayt oluyor ve **taze mi bayat mı
+bilinmiyor**. `ECTE`'yi görmenin tek yolu `0xFC7E0800 + 0x582` ham bellek
+okuması — yani `ioremap`, yani **K2 kararının yeniden açılması**.
+
+**Bu yüzden yazılmadı.** Yazılabilecek tek sürüm, sessizce çöp döndürebilen
+bir okuyucu olurdu — `aorus_laptop`'ın `temp2`/`temp3`/`pwm` hatasıyla aynı
+sınıf. Bu deponun var olma sebebi tam olarak o hatayı tekrarlamamak.
+
+> **Bu, K2'yi (MMIO) yeniden konuşmak için ilk SOMUT sebep.** Karar 7 Eyl'de
+> 🚩 bayrakla kapanmıştı ("kullanıcı tam kavramadığını söyledi, öneri
+> üzerinden gidildi"). O zaman bedeli soyuttu: *"hücre gerilimleri ve ek
+> sıcaklıklar v1'de yok"*. Şimdi somut: **EC İncelemesi paneli ve canlı eğri
+> doğrulaması MMIO olmadan yapılamıyor.**
+>
+> İyi haber: GUI'nin eğri paneli bunu **beklemiyor** — eğriler firmware
+> imajından çıkarıldı (`app/aero-sysfs/src/curves.rs`) ve donanıma dokunmadan
+> çiziliyor. MMIO yalnız *"EC'de gerçekten bu mu yüklü"* doğrulaması için
+> gerekiyor.
+
 ## Kaynak bağımsızlığı
 
 Bu sürücü `aorus_laptop` (`tangalbert919/gigabyte-laptop-wmi`) kaynağından
