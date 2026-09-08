@@ -672,3 +672,24 @@ legacy'de yok, üç profil de iki handler'a birden gidiyor. Betik:
 **Yan etki (kabul edildi):** modül yüklenince legacy `profile` geçici olarak
 `custom` okuyor, çünkü `WMBC`'de `0xED` okuması yok ve sürücü "bilmiyorum"
 demeyi uydurmaya tercih ediyor. İlk profil yazımında çözülüyor.
+
+### ✅ Ölçüm 10 — boot yarışı — **YAPILDI 8 Eyl 2026, İKİ REBOOT**
+
+`~/nixos-zixar` geçişinden sonraki ilk gerçek boot, elle `insmod`'un
+göremediği bir hatayı ortaya çıkardı.
+
+| boot | log | sonuç |
+|---|---|---|
+| 1 (hatalı) | `BAT1 bulunamadi` → 1 sn sonra `ACPI: battery: Slot [BAT1]` | şarj limiti düğümü **hiç oluşmadı** |
+| 2 (düzeltilmiş) | `BAT1 henuz yok (boot yarisi)` → 1 sn sonra `sarj limiti hazir … = 60%` | ✅ bağlandı |
+
+Sürücü `boot.kernelModules` ile ACPI pil sürücüsünden **önce** yükleniyor.
+Çözüm sınırlı gecikmeli yeniden deneme; kendini durdurduğu ayrıca ölçüldü
+(sahte `BATYOK` adıyla: pes ettikten sonra 4 sn boyunca sıfır yeni satır).
+
+**Aynı boot ikinci bir hata daha verdi:** `Failed to resolve unit specifiers
+in 'Pil şarj limiti %60'` — systemd `%` ile başlayanı birim belirteci sanıyor.
+`nix` modülünde `%%` kaçırması eklendi.
+
+**Ders:** ağaç-dışı bir sürücüde *"elle `insmod` ile çalıştı"* bir doğrulama
+değildir. Boot sırası, elle yüklemenin hiç kurmadığı bir durum.

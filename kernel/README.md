@@ -376,6 +376,35 @@ gücü + dGPU bütçesi ölçülerek doğrulanmalı.
   çünkü hiçbir şey yapmayan bir düğme koymak bu deponun kuralına aykırı)
 - `led_classdev` — `KBLL` ölü yazmaç (7 Eyl ölçümü)
 
+### ✅ Üretimde doğrulandı — boot yarışı düzeltmesi (8 Eyl 2026)
+
+İlk gerçek boot hatayı ortaya çıkardı, ikinci boot düzeltmeyi doğruladı.
+
+**Birinci boot (hatalı sürüm):**
+
+```
+14:27:29  aero_eg61h: BAT1 bulunamadi — sarj limiti sunulmuyor
+14:27:30  ACPI: battery: Slot [BAT1] (battery present)     <- BİR SANİYE SONRA
+```
+
+`charge_control_end_threshold` düğümü **hiç oluşmadı**. `aero-ctl` ilk
+açılışta yakaladı — veri katmanının "her düğüm opsiyonel, sebebini söyle"
+sözleşmesi tam da bunun içindi.
+
+**İkinci boot (düzeltilmiş sürüm):**
+
+```
+14:36:09  aero_eg61h: BAT1 henuz yok (boot yarisi) — 30 sn boyunca yeniden denenecek
+14:36:10  aero_eg61h: sarj limiti hazir: BAT1/charge_control_end_threshold = 60%
+```
+
+Yarış **gerçekten oldu** ve yeniden deneme onu kapattı. `aero-ctl` sıfır
+eksik bildiriyor; iki systemd servisi de `success`; `aorus_laptop` yüklü değil.
+
+Bu hatayı yalnız bir reboot bulabilirdi: elle yüklenirken `BAT1` her zaman
+saatlerdir oradaydı. **Ağaç-dışı sürücüde "elle `insmod` ile çalıştı" bir
+doğrulama değildir.**
+
 ## Kaynak bağımsızlığı
 
 Bu sürücü `aorus_laptop` (`tangalbert919/gigabyte-laptop-wmi`) kaynağından
