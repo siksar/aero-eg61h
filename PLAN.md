@@ -3,8 +3,12 @@
 > 7 Eylül 2026 · Gigabyte AERO X16 1VH (SKU EG61VH) · BIOS FB0A / EC F00A
 > Masaüstü: **COSMIC** (System76) · NixOS · çekirdek 7.2.2-cachyos-lto
 >
-> **Durum: çekirdek katmanı + GUI iskeleti + NixOS geçişi bitti** (§10).
-> Kalan: yazma yolu (adım 6 yetki köprüsü, 8-9 menüler) ve EC paneli (10) — sürücü artık fan modunu
+> **Durum (8 Eyl 2026): adım 1-8 ve 11 kapandı** (§10) — sürücü, NixOS geçişi,
+> veri katmanı, yazma köprüsü, GUI ve basit menü çalışıyor.
+> Kalan: adım 9 (gelişmiş menü), Fan Eğrisi paneli (§4.1, veri hazır), ve
+> adım 10 (EC paneli — **K2/MMIO kararına BLOKE**, `kernel/README.md`).
+>
+> Yeni oturum: **`BASLA.md`** — sürücü artık fan modunu
 > ve şarj limitini yazabiliyor. `aorus_laptop`'a geçiş planı: `docs/nixos-gecis.md`.
 > Kararların tamamı §12'de; sürücü kararları (K1-K5) 7 Eyl'de kapandı.
 
