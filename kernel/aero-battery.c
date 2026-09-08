@@ -44,7 +44,9 @@
 #include <linux/device.h>
 #include <linux/errno.h>
 #include <linux/kernel.h>
+#include <linux/jiffies.h>
 #include <linux/power_supply.h>
+#include <linux/workqueue.h>
 
 #include "aero-eg61h.h"
 
@@ -59,6 +61,32 @@ static struct power_supply *aero_battery;
  * sürücünün zorlaması yanlış olur.
  */
 static int aero_charge_limit = -1;
+
+/*
+ * BOOT YARIŞI — 8 Eyl 2026'da reboot'ta ölçüldü.
+ *
+ *   14:27:29  aero_eg61h: BAT1 bulunamadi — sarj limiti sunulmuyor
+ *   14:27:30  ACPI: battery: Slot [BAT1] (battery present)   <- BİR SANİYE SONRA
+ *
+ * Sürücü `boot.kernelModules` ile erken yükleniyor ve ACPI pil sürücüsü
+ * BAT1'i henüz kaydetmemiş oluyor. İlk sürüm burada -ENODEV ile pes ediyordu,
+ * yani reboot sonrası şarj limiti DÜĞÜMÜ HİÇ OLUŞMUYORDU. Elle yüklerken
+ * görünmedi çünkü o an BAT1 saatlerdir oradaydı.
+ *
+ * Çözüm: sınırlı gecikmeli yeniden deneme. `power_supply_reg_notifier()`
+ * daha zarif olurdu ama tek olayı PSY_EVENT_PROP_CHANGED ve kayıt anında
+ * tetiklendiği başlıktan DOĞRULANAMIYOR — tahmin edip yanılmanın bedeli bir
+ * reboot döngüsü. Bu yol akıl yürütmeyle kanıtlanabilir.
+ *
+ * KENDİNİ DURDURUYOR: en fazla AERO_BATTERY_MAX_TRIES deneme, saniyede bir.
+ * Yani boştaki makinede hiçbir şey dönmüyor — 4.28 W bütçesi kuralı.
+ */
+#define AERO_BATTERY_MAX_TRIES 30
+
+static struct device *aero_battery_parent;
+static unsigned int aero_battery_tries;
+static void aero_battery_retry(struct work_struct *w);
+static DECLARE_DELAYED_WORK(aero_battery_work, aero_battery_retry);
 
 static int aero_charge_limit_read(u32 *pct)
 {
@@ -190,20 +218,21 @@ void aero_battery_resume(void)
 		power_supply_changed(aero_battery);
 }
 
-int aero_battery_init(struct device *parent)
+/* Tek deneme. Başarılıysa 0, BAT1 henüz yoksa -ENODEV. */
+static int aero_battery_try_attach(void)
 {
 	u32 pct = 0;
 	int ret;
 
+	if (aero_battery)
+		return 0;
+
 	aero_battery = power_supply_get_by_name(AERO_BATTERY_NAME);
-	if (!aero_battery) {
-		pr_warn("%s bulunamadi — sarj limiti sunulmuyor\n",
-			AERO_BATTERY_NAME);
+	if (!aero_battery)
 		return -ENODEV;
-	}
 
 	ret = power_supply_register_extension(aero_battery, &aero_battery_ext,
-					      parent, NULL);
+					      aero_battery_parent, NULL);
 	if (ret) {
 		power_supply_put(aero_battery);
 		aero_battery = NULL;
@@ -217,8 +246,43 @@ int aero_battery_init(struct device *parent)
 	return 0;
 }
 
+static void aero_battery_retry(struct work_struct *w)
+{
+	if (!aero_battery_try_attach())
+		return;
+
+	if (++aero_battery_tries >= AERO_BATTERY_MAX_TRIES) {
+		pr_warn("%s %u sn icinde gelmedi — sarj limiti sunulmuyor\n",
+			AERO_BATTERY_NAME, AERO_BATTERY_MAX_TRIES);
+		return;
+	}
+
+	schedule_delayed_work(&aero_battery_work, HZ);
+}
+
+int aero_battery_init(struct device *parent)
+{
+	aero_battery_parent = parent;
+	aero_battery_tries = 0;
+
+	if (!aero_battery_try_attach())
+		return 0;
+
+	/*
+	 * BAT1 yok — boot yarışı. Pes etmiyoruz, bekliyoruz. Hata DÖNDÜRMÜYORUZ:
+	 * bu bir başarısızlık değil, henüz tamamlanmamış bir bağlanma.
+	 */
+	pr_info("%s henuz yok (boot yarisi) — %u sn boyunca yeniden denenecek\n",
+		AERO_BATTERY_NAME, AERO_BATTERY_MAX_TRIES);
+	schedule_delayed_work(&aero_battery_work, HZ);
+
+	return 0;
+}
+
 void aero_battery_exit(void)
 {
+	cancel_delayed_work_sync(&aero_battery_work);
+
 	if (!aero_battery)
 		return;
 
@@ -226,4 +290,5 @@ void aero_battery_exit(void)
 	power_supply_put(aero_battery);
 	aero_battery = NULL;
 	aero_charge_limit = -1;
+	aero_battery_parent = NULL;
 }

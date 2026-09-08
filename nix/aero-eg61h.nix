@@ -188,7 +188,7 @@ in
     # Şarj limiti
     # ---------------------------------------------------------------------
     systemd.services.aero-charge-limit = {
-      description = "Pil şarj limiti %${toString cfg.chargeLimit} (aero_eg61h)";
+      description = "Pil şarj limiti %%${toString cfg.chargeLimit} (aero_eg61h)";
       wantedBy = [ "multi-user.target" ];
       after = [ "systemd-modules-load.service" ];
       serviceConfig = {
