@@ -1,0 +1,27 @@
+[package]
+name = "aero-control"
+description = "AERO Kontrol — Gigabyte AERO X16 1VH için COSMIC yerlisi kontrol arayüzü"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+aero-sysfs = { path = "../aero-sysfs" }
+
+# libcosmic crates.io'da YOK, git bağımlılığı. Pin `cosmic-files`'ın
+# epoch-1.6.0 sürümünden alındı (nixpkgs'in paketlediği sürüm) — bilinen-iyi
+# bir bileşim, kendi başımıza rev seçmiyoruz.
+# Özellik listesi de oradan; a11y BİLEREK yok (upstream "a11y feature crashes").
+[dependencies.libcosmic]
+git = "https://github.com/pop-os/libcosmic.git"
+rev = "c1897c01aa8a25776ceadeddcb161bb59ccffd79"
+default-features = false
+features = [
+    "about",
+    "advanced-shaping",
+    "autosize",
+    "multi-window",
+    "tokio",
+    "winit",
+]

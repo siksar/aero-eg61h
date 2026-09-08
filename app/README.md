@@ -74,3 +74,42 @@ AERO X16 1VH (EG61VH) — durum
 ```
 
 `Fan 1 = 0 rpm` **doğru**, hata değil: mod 4 eşiğin altında fanı durduruyor.
+
+## `aero-control` — GUI (8 Eyl 2026)
+
+**Salt okunur.** Yazma yolu yetki köprüsü kararından sonra (`PLAN.md` §10 adım 6).
+
+Beş panel: **Durum** · **Fan ve Termal** · **Güç ve Performans** · **Pil** · **Hakkında**
+
+### Tema — kendi paleti YOK
+
+`libcosmic`, `~/.config/cosmic/com.system76.CosmicTheme.*` dosyalarını **canlı**
+okuyor: vurgu rengi, gece/gündüz, yoğunluk, font, ikon teması bedava geliyor ve
+COSMIC Ayarlar'dan değiştirince anında uyuyor. Bu depoda `~/.config/cosmic`'e
+**yazmak yasak** — yalnız okunuyor.
+
+### Örnekleme — boşta güç kuralı
+
+Yalnız uygulama açıkken, ve görünür panele göre: Durum/Fan'da 2 sn, diğerlerinde
+5 sn. Kapanınca arkada hiçbir şey kalmıyor.
+
+### Bilerek OLMAYAN düğmeler
+
+| yok olan | çünkü |
+|---|---|
+| Fan hızı kaydırıcısı | bu firmware'de fan hızı ayarlanamıyor (duty yazmaçları inert, üç kanıt) |
+| Soket sıcaklığı | `SKTC` ölü kanal — tam yükte CPU 91 °C iken bile 0 |
+| Klavye aydınlatma | `KBLL` ölü yazmaç — yazılıyor, tutuyor, görsel etkisi yok |
+
+Bunların yerine tek satırlık açıklama duruyor. Çalışmayan bir düğüm koymak,
+düğüm koymamaktan kötüdür.
+
+### libcosmic paketleme
+
+crates.io'da yok, git bağımlılığı. Pin `cosmic-files`'ın epoch-1.6.0
+sürümünden alındı (`c1897c01`) — nixpkgs'in paketlediği, bilinen-iyi bileşim;
+kendi başımıza rev seçmiyoruz. `a11y` özelliği BİLEREK yok (upstream
+"a11y feature crashes" diyor).
+
+594 crate, ilk derleme ~2 dk. Nix paketi: `nix/aero-control.nix`
+(`libcosmicAppHook` + `cargoLock.outputHashes`).

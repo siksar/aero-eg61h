@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "aero-sysfs",   # veri katmani — salt okunur, std-only, sifir bagimlilik
     "aero-ctl",     # CLI: durum dokumu (tanilama + aero-sysfs'in kosturulabilir testi)
+    "aero-control", # GUI (libcosmic) — salt okunur
 ]
 
 [workspace.package]
