@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- AERO Kontrol — simgesel sürüm, 16x16, tek renk.
+     Küçültülmüş kopya DEĞİL: rozet ve ısı rengi düşürüldü, kanatlar 16'lık
+     ızgaraya göre şişirildi. 16 px'te render edilip GÖZLE doğrulandı. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
+  <title>AERO Kontrol</title>
+  <g fill="currentColor">
+    <path d="M8 8 C8 4.6 9.6 1.9 12 1.2 C13.6 3.2 13.1 6.2 10.7 7.5 C9.8 8 8.9 8.2 8 8 Z"/>
+    <path d="M8 8 C8 4.6 9.6 1.9 12 1.2 C13.6 3.2 13.1 6.2 10.7 7.5 C9.8 8 8.9 8.2 8 8 Z" transform="rotate(120 8 8)"/>
+    <path d="M8 8 C8 4.6 9.6 1.9 12 1.2 C13.6 3.2 13.1 6.2 10.7 7.5 C9.8 8 8.9 8.2 8 8 Z" transform="rotate(240 8 8)"/>
+  </g>
+  <circle cx="8" cy="8" r="1.9" fill="currentColor"/>
+</svg>

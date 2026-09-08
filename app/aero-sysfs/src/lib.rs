@@ -18,6 +18,7 @@
 //! (ölçüldü, 7 Eyl 2026), yani bu katman **hiç yetki istemiyor**. Yazma yolu
 //! ayrı bir katman olacak (yetki köprüsü kararı henüz verilmedi).
 
+pub mod curves;
 pub mod write;
 pub use write::{Action, Error as WriteError, apply};
 

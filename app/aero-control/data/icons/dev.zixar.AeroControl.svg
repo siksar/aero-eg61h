@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- AERO Kontrol — uygulama ikonu, 256x256.
+     Üç kanatlı pervane: makinenin adı AERO, işi hava akışı. Göbekteki turuncu
+     nokta soğutulan sıcak çekirdek. Rozet orta tonda, açık ve koyu arka planda
+     okunur; gradyan, font, raster gömme ve dış referans yok. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <title>AERO Kontrol</title>
+  <rect x="16" y="16" width="224" height="224" rx="52" fill="#1A7A94"/>
+  <!-- Kanatlar rozet kenarına taşmasın diye merkeze göre %86 küçültüldü
+       (render edilip gözle doğrulandı). -->
+  <g fill="#DCF3F7" transform="translate(128 128) scale(0.86) translate(-128 -128)">
+    <path d="M128 128 C128 73.6 153.6 30.4 192 19.2 C217.6 51.2 209.6 99.2 171.2 120 C156.8 128 142.4 131.2 128 128 Z"/>
+    <path d="M128 128 C128 73.6 153.6 30.4 192 19.2 C217.6 51.2 209.6 99.2 171.2 120 C156.8 128 142.4 131.2 128 128 Z" transform="rotate(120 128 128)"/>
+    <path d="M128 128 C128 73.6 153.6 30.4 192 19.2 C217.6 51.2 209.6 99.2 171.2 120 C156.8 128 142.4 131.2 128 128 Z" transform="rotate(240 128 128)"/>
+  </g>
+  <circle cx="128" cy="128" r="26" fill="#FF9E3D"/>
+</svg>
