@@ -18,6 +18,9 @@
 //! (ölçüldü, 7 Eyl 2026), yani bu katman **hiç yetki istemiyor**. Yazma yolu
 //! ayrı bir katman olacak (yetki köprüsü kararı henüz verilmedi).
 
+pub mod write;
+pub use write::{Action, Error as WriteError, apply};
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
