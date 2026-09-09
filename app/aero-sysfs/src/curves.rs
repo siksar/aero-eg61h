@@ -41,6 +41,10 @@ pub struct Nokta {
     pub duty: u8,
 }
 
+/// Eğri tablolarını seçen kural tablosunun imajdaki adresi
+/// (`firmware-8051.md` §4.2). Kayıt boyu 8 bayt, 24 kayıt + bir catch-all.
+pub const KURAL_TABLOSU: u32 = 0x0616E;
+
 /// Bir fan için bir modun eğrisi.
 #[derive(Debug, Clone, Copy)]
 pub struct Egri {
@@ -49,6 +53,9 @@ pub struct Egri {
     pub fan: u8,
     /// Firmware imajındaki kaynak ofseti — kanıt izlenebilir olsun diye.
     pub kaynak: u32,
+    /// Bu tabloyu seçen kural kaydı, imajdan AYNEN (yeniden kurulmadı):
+    /// `{ b0, 0x00, b2, iç_mod, 0x00, 0xFF, adres_hi, adres_lo }`.
+    pub kural: [u8; 8],
     pub noktalar: [Nokta; 14],
 }
 
@@ -78,6 +85,31 @@ impl Egri {
     pub fn tavan(&self) -> u8 {
         self.noktalar.iter().map(|n| n.duty).max().unwrap_or(0)
     }
+
+    /// Kural kaydının `b0` alanı — grup içindeki tablo seçicisi.
+    /// `0x00` = fan 0, `0x10` = fan 1. (`0x30`/`0x40` hiç görülmedi.)
+    pub fn b0(&self) -> u8 {
+        self.kural[0]
+    }
+
+    /// Kural kaydının `b2` alanı. Ana dizideki beş grupta `0x10`;
+    /// grup 5'te (custom tohumu olduğu DÜŞÜNÜLEN kopya) `0x00`.
+    pub fn b2(&self) -> u8 {
+        self.kural[2]
+    }
+
+    /// EC'nin **iç** mod numarası. Sysfs adıyla aynı değil — "Dengeli"
+    /// iç mod `0x04`, "Duyarlı" iç mod `0x00`. `aorus_laptop`'ın
+    /// yanlış bildirdiği ayrım tam burada.
+    pub fn ic_mod(&self) -> u8 {
+        self.kural[3]
+    }
+
+    /// Kural kaydının işaret ettiği tablo adresi — [`Egri::kaynak`] ile
+    /// aynı olmalı (bir test bunu sabitliyor).
+    pub fn kural_adresi(&self) -> u32 {
+        (self.kural[6] as u32) << 8 | self.kural[7] as u32
+    }
 }
 
 /// Verilen mod ve fan için eğri.
@@ -87,8 +119,9 @@ pub fn egri(m: FanMode, fan: u8) -> Option<&'static Egri> {
 
 
 pub const EGRILER: [Egri; 10] = [
-    // kaynak 0x05A66 · iç mod 0x02 · b0 0x00
-    Egri { mod_: FanMode::Quiet, fan: 0, kaynak: 0x05A66, noktalar: [
+    // kaynak 0x05A66 · iç mod 0x02 · b0 0x00 · kural[0] @ 0x0616E
+    Egri { mod_: FanMode::Quiet, fan: 0, kaynak: 0x05A66,
+           kural: [0x00, 0x00, 0x10, 0x02, 0x00, 0xFF, 0x5A, 0x66], noktalar: [
         Nokta { t1:  54, t2:  69, duty:  18 },
         Nokta { t1:  61, t2:  71, duty:  18 },
         Nokta { t1:  63, t2:  74, duty:  20 },
@@ -104,8 +137,9 @@ pub const EGRILER: [Egri; 10] = [
         Nokta { t1:  88, t2:  98, duty:  26 },
         Nokta { t1:  90, t2: 100, duty:  29 },
     ] },
-    // kaynak 0x05AB1 · iç mod 0x02 · b0 0x10
-    Egri { mod_: FanMode::Quiet, fan: 1, kaynak: 0x05AB1, noktalar: [
+    // kaynak 0x05AB1 · iç mod 0x02 · b0 0x10 · kural[1] @ 0x06176
+    Egri { mod_: FanMode::Quiet, fan: 1, kaynak: 0x05AB1,
+           kural: [0x10, 0x00, 0x10, 0x02, 0x00, 0xFF, 0x5A, 0xB1], noktalar: [
         Nokta { t1:  50, t2:  60, duty:  18 },
         Nokta { t1:  54, t2:  64, duty:  21 },
         Nokta { t1:  58, t2:  68, duty:  21 },
@@ -121,8 +155,9 @@ pub const EGRILER: [Egri; 10] = [
         Nokta { t1:  88, t2:  96, duty:  29 },
         Nokta { t1:  91, t2: 100, duty:  29 },
     ] },
-    // kaynak 0x05B92 · iç mod 0x00 · b0 0x00
-    Egri { mod_: FanMode::Responsive, fan: 0, kaynak: 0x05B92, noktalar: [
+    // kaynak 0x05B92 · iç mod 0x00 · b0 0x00 · kural[4] @ 0x0618E
+    Egri { mod_: FanMode::Responsive, fan: 0, kaynak: 0x05B92,
+           kural: [0x00, 0x00, 0x10, 0x00, 0x00, 0xFF, 0x5B, 0x92], noktalar: [
         Nokta { t1:  40, t2:  54, duty:  18 },
         Nokta { t1:  46, t2:  59, duty:  20 },
         Nokta { t1:  51, t2:  64, duty:  21 },
@@ -138,8 +173,9 @@ pub const EGRILER: [Egri; 10] = [
         Nokta { t1:  91, t2:  98, duty:  38 },
         Nokta { t1:  93, t2: 100, duty:  43 },
     ] },
-    // kaynak 0x05BDD · iç mod 0x00 · b0 0x10
-    Egri { mod_: FanMode::Responsive, fan: 1, kaynak: 0x05BDD, noktalar: [
+    // kaynak 0x05BDD · iç mod 0x00 · b0 0x10 · kural[5] @ 0x06196
+    Egri { mod_: FanMode::Responsive, fan: 1, kaynak: 0x05BDD,
+           kural: [0x10, 0x00, 0x10, 0x00, 0x00, 0xFF, 0x5B, 0xDD], noktalar: [
         Nokta { t1:  48, t2:  57, duty:  18 },
         Nokta { t1:  51, t2:  60, duty:  20 },
         Nokta { t1:  54, t2:  62, duty:  21 },
@@ -155,8 +191,9 @@ pub const EGRILER: [Egri; 10] = [
         Nokta { t1:  89, t2:  98, duty:  43 },
         Nokta { t1:  93, t2: 100, duty:  43 },
     ] },
-    // kaynak 0x05CBE · iç mod 0x04 · b0 0x00
-    Egri { mod_: FanMode::Balanced, fan: 0, kaynak: 0x05CBE, noktalar: [
+    // kaynak 0x05CBE · iç mod 0x04 · b0 0x00 · kural[8] @ 0x061AE
+    Egri { mod_: FanMode::Balanced, fan: 0, kaynak: 0x05CBE,
+           kural: [0x00, 0x00, 0x10, 0x04, 0x00, 0xFF, 0x5C, 0xBE], noktalar: [
         Nokta { t1:  54, t2:  70, duty:  18 },
         Nokta { t1:  60, t2:  74, duty:  20 },
         Nokta { t1:  66, t2:  77, duty:  21 },
@@ -172,8 +209,9 @@ pub const EGRILER: [Egri; 10] = [
         Nokta { t1:  88, t2:  98, duty:  38 },
         Nokta { t1:  90, t2: 100, duty:  43 },
     ] },
-    // kaynak 0x05D09 · iç mod 0x04 · b0 0x10
-    Egri { mod_: FanMode::Balanced, fan: 1, kaynak: 0x05D09, noktalar: [
+    // kaynak 0x05D09 · iç mod 0x04 · b0 0x10 · kural[9] @ 0x061B6
+    Egri { mod_: FanMode::Balanced, fan: 1, kaynak: 0x05D09,
+           kural: [0x10, 0x00, 0x10, 0x04, 0x00, 0xFF, 0x5D, 0x09], noktalar: [
         Nokta { t1:  48, t2:  57, duty:  18 },
         Nokta { t1:  51, t2:  60, duty:  20 },
         Nokta { t1:  54, t2:  62, duty:  21 },
@@ -189,8 +227,9 @@ pub const EGRILER: [Egri; 10] = [
         Nokta { t1:  89, t2:  98, duty:  43 },
         Nokta { t1:  93, t2: 100, duty:  43 },
     ] },
-    // kaynak 0x05DEA · iç mod 0x01 · b0 0x00
-    Egri { mod_: FanMode::Gaming, fan: 0, kaynak: 0x05DEA, noktalar: [
+    // kaynak 0x05DEA · iç mod 0x01 · b0 0x00 · kural[12] @ 0x061CE
+    Egri { mod_: FanMode::Gaming, fan: 0, kaynak: 0x05DEA,
+           kural: [0x00, 0x00, 0x10, 0x01, 0x00, 0xFF, 0x5D, 0xEA], noktalar: [
         Nokta { t1:  40, t2:  54, duty:  18 },
         Nokta { t1:  46, t2:  59, duty:  20 },
         Nokta { t1:  51, t2:  64, duty:  21 },
@@ -206,8 +245,9 @@ pub const EGRILER: [Egri; 10] = [
         Nokta { t1:  88, t2: 105, duty:  48 },
         Nokta { t1:  90, t2: 110, duty:  53 },
     ] },
-    // kaynak 0x05E35 · iç mod 0x01 · b0 0x10
-    Egri { mod_: FanMode::Gaming, fan: 1, kaynak: 0x05E35, noktalar: [
+    // kaynak 0x05E35 · iç mod 0x01 · b0 0x10 · kural[13] @ 0x061D6
+    Egri { mod_: FanMode::Gaming, fan: 1, kaynak: 0x05E35,
+           kural: [0x10, 0x00, 0x10, 0x01, 0x00, 0xFF, 0x5E, 0x35], noktalar: [
         Nokta { t1:  46, t2:  54, duty:  18 },
         Nokta { t1:  49, t2:  57, duty:  20 },
         Nokta { t1:  52, t2:  60, duty:  21 },
@@ -223,8 +263,9 @@ pub const EGRILER: [Egri; 10] = [
         Nokta { t1:  79, t2:  88, duty:  53 },
         Nokta { t1:  83, t2: 100, duty:  53 },
     ] },
-    // kaynak 0x05F16 · iç mod 0x03 · b0 0x00
-    Egri { mod_: FanMode::Turbo, fan: 0, kaynak: 0x05F16, noktalar: [
+    // kaynak 0x05F16 · iç mod 0x03 · b0 0x00 · kural[16] @ 0x061EE
+    Egri { mod_: FanMode::Turbo, fan: 0, kaynak: 0x05F16,
+           kural: [0x00, 0x00, 0x10, 0x03, 0x00, 0xFF, 0x5F, 0x16], noktalar: [
         Nokta { t1:  36, t2:  48, duty:  63 },
         Nokta { t1:  43, t2:  54, duty:  63 },
         Nokta { t1:  49, t2:  60, duty:  63 },
@@ -240,8 +281,9 @@ pub const EGRILER: [Egri; 10] = [
         Nokta { t1:  91, t2: 105, duty:  63 },
         Nokta { t1: 100, t2: 110, duty:  63 },
     ] },
-    // kaynak 0x05F61 · iç mod 0x03 · b0 0x10
-    Egri { mod_: FanMode::Turbo, fan: 1, kaynak: 0x05F61, noktalar: [
+    // kaynak 0x05F61 · iç mod 0x03 · b0 0x10 · kural[17] @ 0x061F6
+    Egri { mod_: FanMode::Turbo, fan: 1, kaynak: 0x05F61,
+           kural: [0x10, 0x00, 0x10, 0x03, 0x00, 0xFF, 0x5F, 0x61], noktalar: [
         Nokta { t1:  46, t2:  54, duty:  63 },
         Nokta { t1:  49, t2:  57, duty:  63 },
         Nokta { t1:  52, t2:  60, duty:  63 },
@@ -347,5 +389,56 @@ mod tests {
         assert_eq!(egri(FanMode::Quiet, 0).unwrap().kaynak, 0x05A66);
         assert_eq!(egri(FanMode::Balanced, 0).unwrap().kaynak, 0x05CBE);
         assert_eq!(egri(FanMode::Turbo, 0).unwrap().kaynak, 0x05F16);
+    }
+
+    /// Kural kaydı, taşıdığı eğriyi gerçekten gösteriyor mu. Kayıt imajdan
+    /// AYNEN alındığı için bu, "üreteç doğru kaydı eşledi" denetimidir.
+    #[test]
+    fn kural_kaydi_kendi_tablosunu_gosteriyor() {
+        for e in &EGRILER {
+            assert_eq!(e.kural_adresi(), e.kaynak, "{:?} fan{}", e.mod_, e.fan);
+            assert_eq!(e.b0(), e.fan * 0x10, "{:?} fan{}", e.mod_, e.fan);
+            // Ana dizideki beş grubun hepsinde b2 = 0x10 (§4.2).
+            assert_eq!(e.b2(), 0x10, "{:?} fan{}", e.mod_, e.fan);
+            // Sabit alanlar: kayıt düzeni { b0, 00, b2, mod, 00, FF, hi, lo }.
+            assert_eq!(e.kural[1], 0x00);
+            assert_eq!(e.kural[4], 0x00);
+            assert_eq!(e.kural[5], 0xFF);
+        }
+    }
+
+    /// İç mod numaraları sysfs adlarıyla AYNI DEĞİL — `aorus_laptop`'ın
+    /// yanlış bildirdiği ayrım burada sabitleniyor (`firmware-8051.md` §4.2).
+    #[test]
+    fn ic_mod_numaralari_belgeyle_ayni() {
+        for (m, imod) in [
+            (FanMode::Responsive, 0x00u8),
+            (FanMode::Gaming, 0x01),
+            (FanMode::Quiet, 0x02),
+            (FanMode::Turbo, 0x03),
+            (FanMode::Balanced, 0x04),
+        ] {
+            for fan in 0..2u8 {
+                assert_eq!(egri(m, fan).unwrap().ic_mod(), imod, "{m:?} fan{fan}");
+            }
+        }
+    }
+
+    /// Aynı modun iki fanı aynı iç moda ait olmalı — grup içindeki iki tablo.
+    #[test]
+    fn iki_fan_ayni_gruptan() {
+        for m in [
+            FanMode::Quiet,
+            FanMode::Balanced,
+            FanMode::Responsive,
+            FanMode::Gaming,
+            FanMode::Turbo,
+        ] {
+            let a = egri(m, 0).unwrap();
+            let b = egri(m, 1).unwrap();
+            assert_eq!(a.ic_mod(), b.ic_mod(), "{m:?}");
+            // Grup adımı 0x4B (15 satır × 5 bayt).
+            assert_eq!(b.kaynak - a.kaynak, 0x4B, "{m:?}");
+        }
     }
 }

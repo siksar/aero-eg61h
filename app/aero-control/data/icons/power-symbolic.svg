@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Güç ve Performans paneli — simgesel, 16x16, tek renk.
+     Kurulu ikon temasında `power-profile-performance-symbolic` YOK
+     (8 Eyl'de bakıldı). Şimşek: profilin ne anahtarladığını (güç bütçesi)
+     anlatan en kısa şekil. 16 px'te render edilip GÖZLE doğrulandı. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
+  <title>Güç ve Performans</title>
+  <path d="M9.6 1 L3.4 9.1 H7.2 L6.4 15 L12.6 6.9 H8.8 Z" fill="currentColor"/>
+</svg>

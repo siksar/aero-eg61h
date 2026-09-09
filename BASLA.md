@@ -38,12 +38,12 @@ doğrulandı:
 | `kernel/` — `aero_eg61h.ko`: 3 `wmi_driver`, hwmon, şarj limiti, fan modu, `platform_profile` | ✅ boot'tan geliyor |
 | `nix/aero-eg61h.nix` — modül, 5 servis, blacklist, polkit | ✅ `verify-context.sh` geçiyor |
 | `nix/nixos-zixar-gecis.patch` — geçiş yaması | ✅ uygulandı |
-| `app/aero-sysfs` — okuma + yazma katmanı, **18 test** | ✅ yetkisiz çalışıyor |
+| `app/aero-sysfs` — okuma + yazma katmanı + eğri tabloları, **21 test** | ✅ yetkisiz çalışıyor |
 | `app/aero-ctl` — durum dökümü + `set` | ✅ |
-| `app/aero-control` — libcosmic GUI, 6 panel, logo | ✅ salt okuma + basit menü |
+| `app/aero-control` — libcosmic GUI, **7 panel**, logo, gömülü nav simgeleri | ✅ okuma + yazma + basit menü + **Fan Eğrisi** |
 
-`PLAN.md` §10: adım **1-8 ve 11 kapandı**. Kalan: 9 (gelişmiş menü),
-10 (EC paneli — **bloke**, aşağı bak), ve Fan Eğrisi paneli (§4.1).
+`PLAN.md` §10: adım **1-8, 8b ve 11 kapandı**. Kalan: 9 (gelişmiş menü) ve
+10 (EC paneli — **bloke**, aşağı bak).
 
 ## ⛔ AÇIK KARAR — K2 (MMIO), artık somut bir sebeple
 
@@ -68,19 +68,18 @@ O zaman bedeli soyuttu; şimdi somut:
 | Hücre gerilimi yok | + dört hücre gerilimi |
 | `ecpoke`/`ecscope` çalışır | `request_mem_region` çağrılmazsa yine çalışır |
 
-**Fan Eğrisi paneli bunu BEKLEMİYOR** — eğriler zaten çıkarıldı
-(`app/aero-sysfs/src/curves.rs`, 10 eğri, 7 test). Önce onu yaz, K2'yi
-kullanıcıyla sonra konuş.
+**Fan Eğrisi paneli bunu BEKLEMEDİ** — 8 Eyl'de yazıldı ve ekranda doğrulandı.
+Panelde «EC'den doğrula» düğmesi **yok** ve gerekçesi ekranda yazılı; K2
+açılırsa o düğme geri gelir. Yani K2 artık **tek bir şeyi** bekletiyor:
+EC İncelemesi paneli (adım 10) ve hücre gerilimi.
 
 ## Sıradaki iş
 
-1. **Fan Eğrisi paneli** (`PLAN.md` §4.1) — veri hazır, donanıma dokunmuyor.
-   Basamak çizimi, iki fan üst üste, canlı sıcaklık imleci, "beş modu birden"
-   karşılaştırma kipi. **İnterpolasyon YAPMA** — `t1`/`t2`'nin ara davranışı
-   ölçülmedi ve `curves.rs` bunu bir testle sabitliyor.
-2. **Adım 9 — gelişmiş menü**: ayrık kontroller + `DIKKAT` sınıfı için onay
+1. **Adım 9 — gelişmiş menü**: ayrık kontroller + `DIKKAT` sınıfı için onay
    diyaloğu + geri al. `selectors.tsv`'deki `YASAK` sınıfı **hiç gösterilmez**.
-3. **Adım 10 — EC paneli**: K2 kararına bağlı, bekliyor.
+   Fan Eğrisi panelindeki "Ham tablo ve kaynak" anahtarı gelişmiş kipe
+   taşınabilir — şimdilik panelin kendi yerel anahtarı, çünkü gelişmiş kip yok.
+2. **Adım 10 — EC paneli**: K2 kararına bağlı, bekliyor.
 
 ### Ölçüm borcu (ikisi de kayıtlı)
 
@@ -132,6 +131,9 @@ kullanıcıyla sonra konuş.
 | `make`, `python3`, `jq`, `rsvg-convert` PATH'te **yok** | flake'ten `nix build` ile çek, `.gcroots/` |
 | `dmesg` root ister (`kernel.dmesg_restrict=1`) | `sudo dmesg` ya da `journalctl -b -k` |
 | Ağaç-dışı modül güncellemesi **reboot ister** | `modprobe -r` yetmez |
+| GUI ikilisi düz çalıştırılınca `NoWaylandLib` ile **panikliyor** | `app/run.sh` (LD_LIBRARY_PATH → `.gcroots/gui-env`) |
+| İkon temasında `temperature`/`power-profile-performance`/çizgi-grafiği simgesi **yok** | üçü elde çizilip `include_bytes!` ile gömüldü |
+| `clippy` ve `rustfmt` de rustup kabuğu | `.gcroots/{clippy,rustfmt}` (flake'ten, rustc ile aynı sürüm) |
 | **Elle `insmod` bir doğrulama DEĞİL** | Boot yarışını yalnız reboot buldu (BAT1 sürücüden 1 sn sonra geliyor) |
 | SVG'nin geçerli XML olması "logo iyi" demek değil | Hedef boyutta **render edip BAK** (`librsvg`) |
 
@@ -160,7 +162,8 @@ tam çıktıya bakın.
 ## Hızlı sağlık kontrolü
 
 ```bash
-~/aero-eg61h/app/target/release/aero-ctl
+~/aero-eg61h/app/target/release/aero-ctl   # durum dokumu
+~/aero-eg61h/app/run.sh                    # GUI (duz ikili NoWaylandLib ile duser)
 ```
 
 Hiç "EKSİKLER" satırı çıkmamalı. Çıkarsa ne olduğunu ve ne yapılacağını

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Fan ve Termal paneli — simgesel, 16x16, tek renk.
+     Kurulu ikon temasında `temperature-symbolic` YOK (8 Eyl'de bakıldı);
+     nav'da boş yer kalıyordu. Uygulamanın kendi logosuyla aynı üç kanatlı
+     pervane, nav boyutunda okunacak kadar kalınlaştırılmış.
+     16 px'te render edilip GÖZLE doğrulandı. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
+  <title>Fan ve Termal</title>
+  <g fill="currentColor">
+    <path d="M8 8 C8 4.4 9.7 1.7 12.2 1 C13.9 3.1 13.3 6.3 10.8 7.6 C9.9 8.1 8.9 8.3 8 8 Z"/>
+    <path d="M8 8 C8 4.4 9.7 1.7 12.2 1 C13.9 3.1 13.3 6.3 10.8 7.6 C9.9 8.1 8.9 8.3 8 8 Z" transform="rotate(120 8 8)"/>
+    <path d="M8 8 C8 4.4 9.7 1.7 12.2 1 C13.9 3.1 13.3 6.3 10.8 7.6 C9.9 8.1 8.9 8.3 8 8 Z" transform="rotate(240 8 8)"/>
+  </g>
+  <circle cx="8" cy="8" r="2" fill="currentColor"/>
+</svg>

@@ -227,6 +227,30 @@ Panelde "kaydet" düğmesi olmayacak; bunun yerine grafiğin köşesinde kalıc�
 not: *"Bu firmware'de eğriler değiştirilemez; mod seçimi hangi eğrinin
 yükleneceğini belirler."*
 
+#### Ne yapıldı — 8 Eyl 2026
+
+Panel yazıldı ve ekranda doğrulandı (`app/README.md`, "Fan Eğrisi paneli").
+Yukarıdakilerin **hepsi** var, **bir tanesi hariç**:
+
+> **«EC'den doğrula» düğmesi KONULMADI.** Yukarıda "düğmeye basılınca aktif eğri
+> `EIDR` ile EC'den okunur" yazıyor — bu, panel tasarlandığında henüz mümkün
+> sanılıyordu. 7-8 Eyl'de DSDT'den doğrulandı ki değil: `ERCD` zaman aşımını
+> bildirmiyor ve `ECTE`'yi dışarı veren metot yok, yani **bayat veri geçerli
+> cevaptan ayırt edilemiyor** (`kernel/README.md`). Ölçülmemiş bir yeteneği
+> sunmama kuralı gereği düğme yok; yerine gerekçesi ekranda yazılı.
+> K2 (MMIO) kararı açılırsa bu düğme geri gelir.
+
+Tasarımda olmayıp eklenen üç şey, üçü de bedava çıktığı için:
+
+- **Fare imleci.** Grafiğin üstünde gezinirken kesik bir dikey imleç ve o
+  sıcaklıktaki bütün duty'ler. Tuval `draw`'a zaten fare konumunu veriyor,
+  yani ne mesaj tesisatı ne durum gerekti.
+- **Efsane tuvalin içinde.** Ölçülen en yüksek duty %63, Y ekseni 0-100, yani
+  grafiğin üst üçte biri her modda boş — efsane oraya sabitlendi.
+- **Kural kaydı.** `Egri` artık kendisini seçen 8 baytlık kaydı imajdan **aynen**
+  taşıyor, yani gelişmiş görünümdeki "hangi kaynak tablodan geldiği" bir
+  çıkarım değil bir alıntı.
+
 ---
 
 ## 5. Basit / Gelişmiş ayrımı
@@ -384,6 +408,7 @@ Her adım tek başına çalışır ve tek başına doğrulanır.
 | 6 | ~~Daemon~~ → **yetki köprüsü** (polkit + PPD; daemon YOK, karar ölçümle) | `aero-ctl set` yetkisiz çalışıyor, geçersizler reddediliyor | ✅ **8 Eyl 2026** |
 | 7 | **GUI iskeleti** — `nav_bar` + 5 panel, hepsi salt okunur | 594 crate derlendi; Wayland oturumunda çöküşsüz açıldı | ✅ **8 Eyl 2026** |
 | 8 | **Basit menü** — 5 ön ayar + şarj kaydırıcısı | köprü yetkisiz çalışıyor; beş geçersiz girdi reddedildi | ✅ **8 Eyl 2026** |
+| 8b | **Fan Eğrisi paneli** (§4.1) — basamak çizimi, iki fan, karşılaştırma, ham tablo | ekranda doğrulandı; `cizim_hesapla_ayni` testi çizimi hesapla bağlıyor | ✅ **8 Eyl 2026** |
 | 9 | **Gelişmiş menü** — ayrık kontroller + onay diyalogları | `DIKKAT` ayarları parola istiyor, geri al çalışıyor | |
 | 10 | **EC İncelemesi paneli** | çıktı `ecpoke` ölçümüyle bayt-birebir | |
 | 11 | **NixOS geçişi** — `aorus_laptop` bırakılır | yama uygulandı, `verify-context.sh` geçti, switch edildi | ✅ **8 Eyl 2026** (reboot bekliyor) |
@@ -475,7 +500,7 @@ Kullanıcı uygulamayı denedikçe buraya yazılacak. Biçim: tarih · istek · 
 | 2026-09-07 | Basit / Gelişmiş menü ayrımı | planda (§5) |
 | 2026-09-07 | Kullanıcının kendi tema renklerini devralma + gündüz/gece | planda (§6) |
 | 2026-09-07 | Modern tasarım | planda (§3 — libcosmic) |
-| 2026-09-07 | Seçilen fan modunu **sıcaklık fonksiyonu** olarak çizen eğri paneli | planda (§4.1) |
+| 2026-09-07 | Seçilen fan modunu **sıcaklık fonksiyonu** olarak çizen eğri paneli | ✅ **8 Eyl 2026** (§10 adım 8b) |
 | 2026-09-07 | Klavye özelleştirme | **ertelendi** — `KBLL` ölü çıktı; LampArray yolu ayrı iş |
 
 ---

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Fan Eğrisi paneli — simgesel, 16x16, tek renk.
+     Neden elde çizildi: kurulu ikon temasında (Pop/Cosmic) çizgi grafiği
+     simgesi YOK; `office-chart-line-symbolic` çözülmüyor ve nav'da boş yer
+     bırakıyordu. Panelin anlattığı şey basamak olduğu için simge de basamak.
+     16 px'te render edilip GÖZLE doğrulandı. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
+  <title>Fan Eğrisi</title>
+  <path d="M1 13.2h3.4V9.8h3.4V6.4h3.4V3H15"
+        fill="none" stroke="currentColor" stroke-width="1.8"
+        stroke-linecap="butt" stroke-linejoin="miter"/>
+</svg>
