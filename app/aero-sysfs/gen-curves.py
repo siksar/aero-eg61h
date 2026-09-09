@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""curves.rs üreteci — EC firmware imajından fan eğrisi tablolarını çıkarır.
+"""curves.rs generator — extracts fan-curve tables from an EC firmware image.
 
 KAYNAK: ~/Downloads/aero-ec/EG61H-EC-F00A.bin (BIOS FB0A / EC F00A)
 Ofsetler ve yapı: ~/ecscope/docs/firmware-8051.md §4.
@@ -12,7 +12,7 @@ Grup içinde dört tablo: b0 = 0x00 (fan 0), 0x10 (fan 1), 0x30, 0x40.
 0x30/0x40 HİÇ ÖLÇÜLMEDİ (bütün ölçümler pilde yapıldı) — çıkarılmıyorlar.
 
 Her eğri, kendisini seçen KURAL KAYDINI da taşıyor (§4.2, tablo 0x0616E).
-Kayıt imajdan AYNEN okunuyor, yeniden kurulmuyor: arayüzün "bu eğri nereden
+Kayıt is read exactly from the image and is not reconstructed: arayüzün "bu eğri nereden
 geliyor" sorusuna verdiği cevap böylece bir çıkarım değil, bir alıntı.
 """
 import sys, pathlib
@@ -184,7 +184,7 @@ impl Egri {
     }
 
     /// EC'nin **iç** mod numarası. Sysfs adıyla aynı değil — "Dengeli"
-    /// iç mod `0x04`, "Duyarlı" iç mod `0x00`. `aorus_laptop`'ın
+    /// iç mod `0x04`, "Duyarlı" iç mod `0x00`. the legacy driver's
     /// yanlış bildirdiği ayrım tam burada.
     pub fn ic_mod(&self) -> u8 {
         self.kural[3]
@@ -313,7 +313,7 @@ mod tests {
         }
     }
 
-    /// İç mod numaraları sysfs adlarıyla AYNI DEĞİL — `aorus_laptop`'ın
+    /// İç mod numaraları sysfs adlarıyla aynı değildir — legacy mode numbering
     /// yanlış bildirdiği ayrım burada sabitleniyor (`firmware-8051.md` §4.2).
     #[test]
     fn ic_mod_numaralari_belgeyle_ayni() {

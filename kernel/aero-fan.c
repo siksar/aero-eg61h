@@ -25,7 +25,7 @@
  *     Ters sırada ara durum turbo'ya yakın desenlere düşebilirdi.
  *
  * WMBD'nin dönüşü bilgi taşımadığı için (ölçüldü) dizinin sonunda desen
- * DÖRT SEÇİCİYLE GERİ OKUNUP karşılaştırılıyor. `aorus_laptop`'ın yanlış
+ * DÖRT SEÇİCİYLE GERİ OKUNUP karşılaştırılıyor. the legacy driver's failure to
  * `fan_mode` bildirmesinin sebebi tam olarak bu doğrulamayı yapmaması.
  */
 
@@ -144,7 +144,7 @@ out:
 		return ret;
 
 	if (back != pattern) {
-		pr_warn("fan modu 0x%02x yazildi ama EC 0x%02x okuyor — tutmadi\n",
+		pr_warn("fan mode 0x%02x was written but EC reads 0x%02x — write did not stick\n",
 			pattern, back);
 		return -EIO;
 	}
@@ -171,7 +171,7 @@ static ssize_t fan_mode_show(struct device *dev, struct device_attribute *attr,
 		 * gizlemiyoruz — "unknown" deyip ham deseni loglamak, yanlış bir
 		 * isim uydurmaktan iyi.
 		 */
-		dev_warn(dev, "0x2C tanimsiz desende: 0x%02x\n", pattern);
+		dev_warn(dev, "0x2C has an unknown pattern: 0x%02x\n", pattern);
 		return sysfs_emit(buf, "unknown\n");
 	}
 

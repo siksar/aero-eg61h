@@ -75,12 +75,12 @@
  *
  * İki seçici de aynı alanı okuyor ve o alan bu makinede HEP SIFIR.
  * 7 Eyl 2026, iki bağımsız koşu:
- *   - boşta:  WMBC 0xE2 = 0, aorus_laptop temp2_input = 0 (aynı anda)
+ *   - idle:    WMBC 0xE2 = 0 while the machine is otherwise healthy
  *   - tam yük: CPU 91 °C, fanlar 3333/3703 rpm dönerken  WMBC 0xE2 = 0
  * Yani okuma doğru, alan boş. hwmon'a temp2 GİRMİYOR.
  *
- * aorus_laptop bu makinede temp2 VE temp3 sunuyor, ikisi de sıfır okuyor —
- * pwm1/pwm2 ile aynı hata sınıfı: ölçülmemiş bir kanalı varmış gibi göstermek.
+ * The channel is intentionally omitted from hwmon because it has no measured
+ * signal on this hardware.
  */
 
 /*
@@ -95,8 +95,8 @@
  *   0xF1 0xF2 0xF3             ECPT güç limitleri; EC geri yazıyor
  *   0x46 0x47 0x50 0x6B 0x70   FDTY/GDTY/FAN1/FAN2 — ÖLÜ YAZMAÇ: bayt tutuyor,
  *                              RPM değişmiyor, hiçbir modda (üç bağımsız kanıt).
- *                              aorus_laptop bunları pwm olarak sunuyor ve YALAN
- *                              söylüyor; biz sunmayacağız.
+ *                              These registers are intentionally not exposed:
+ *                              writes do not change fan speed.
  *   0x68  (XFNW)               eğri yazma protokolü ölü — XFN1 hiç dolmuyor
  *   0xF6  (KBLL)               ölü yazmaç: yazılıyor, tutuyor, GÖRSEL ETKİSİ YOK
  *                              (7 Eyl 2026, aydınlatma açıkken 3 gidiş-geliş).
@@ -119,9 +119,8 @@
 
 /*
  * Mod 4 (0x09) 7 Eyl 2026'da canlı ölçümle keşfedildi ve makine o sırada zaten
- * ondaydı — aorus_laptop ise fan_mode = 1 diyordu. "Sessiz gibi geç başla,
- * varsayılan gibi yükselebil": günlük kullanım için en dengeli eğri ve hiçbir
- * Linux aracı sunmuyor.
+ * ondaydı. It starts like quiet mode but reaches the balanced-mode ceiling,
+ * making it a useful daily curve.
  *
  * Mod yazarken hedef deseni TAM yazmak, diğer üç biti temizlemek şart —
  * dört ayrı seçici (0x57 CRAF, 0x71 FANB, 0x67 TENF, 0x6A ADJF) sırayla

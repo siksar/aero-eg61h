@@ -5,7 +5,7 @@
  * Sürücünün İLK YAZMA YOLU. Standart ABI:
  *   /sys/class/power_supply/BAT1/charge_control_end_threshold   (yüzde)
  *
- * Özel bir `charge_limit` düğümü SUNULMUYOR — aorus_laptop'ınki bu; standart
+ * Özel bir `charge_limit` düğümü SUNULMUYOR — the legacy driver's node; the standard
  * karşılığı varken özel düğüm açmak, aracın onu tanımaması demek.
  * `charge_mode` (WMBD 0x64, BCPS) da yok: anlamı DSDT'den doğrulanamıyor ve
  * standart bir karşılığı yok.
@@ -23,7 +23,7 @@
  * 2. EC LİMİTİ UYANIŞTA GERİ ALIYOR — ŞÜPHELİ, 7 Eyl'de TEKRARLANMADI.
  *    6 Eyl hükmü: boot servisi 60 yazmıştı, sysfs değişim zamanı hâlâ boot
  *    anındayken değer %100 okuyordu — yani kimse 100 yazmadı, EC kendi geri
- *    aldı. Ama o gözlem `aorus_laptop`'ın charge_limit geri okumasına
+ *    aldı. Ama o gözlem the legacy driver's charge_limit geri okumasına
  *    dayanıyordu, ve o sürücünün fan_mode'u yanlış bildirdiği artık ÖLÇÜLDÜ.
  *
  *    7 Eyl'de bu sürücüyle bir s2idle döngüsü yapıldı: limit KORUNDU, kanca
@@ -113,7 +113,7 @@ static int aero_charge_limit_write(u32 pct)
 		return ret;
 
 	if (back != pct) {
-		pr_warn("sarj limiti %u%% yazildi ama EC %u%% okuyor — yazim tutmadi\n",
+		pr_warn("charge limit %u%% was written but EC reads %u%% — write did not stick\n",
 			pct, back);
 		return -EIO;
 	}
@@ -203,17 +203,17 @@ void aero_battery_resume(void)
 
 	ret = aero_charge_limit_read(&now);
 	if (!ret && now == (u32)aero_charge_limit) {
-		pr_info("uyanis: sarj limiti %d%% korunmus, dokunulmadi\n",
+		pr_info("resume: charge limit %d%% is still set; no write needed\n",
 			aero_charge_limit);
 		return;
 	}
 
-	pr_info("uyanis: sarj limiti %u%% okundu, %d%% yeniden uygulaniyor\n",
+	pr_info("resume: read charge limit %u%%; restoring %d%%\n",
 		now, aero_charge_limit);
 
 	ret = aero_charge_limit_write(aero_charge_limit);
 	if (ret)
-		pr_warn("uyanis: sarj limiti yeniden uygulanamadi (%d)\n", ret);
+		pr_warn("resume: could not restore charge limit (%d)\n", ret);
 	else
 		power_supply_changed(aero_battery);
 }
@@ -240,7 +240,7 @@ static int aero_battery_try_attach(void)
 	}
 
 	if (!aero_charge_limit_read(&pct))
-		pr_info("sarj limiti hazir: %s/charge_control_end_threshold = %u%%\n",
+		pr_info("charge limit ready: %s/charge_control_end_threshold = %u%%\n",
 			AERO_BATTERY_NAME, pct);
 
 	return 0;
@@ -252,7 +252,7 @@ static void aero_battery_retry(struct work_struct *w)
 		return;
 
 	if (++aero_battery_tries >= AERO_BATTERY_MAX_TRIES) {
-		pr_warn("%s %u sn icinde gelmedi — sarj limiti sunulmuyor\n",
+		pr_warn("%s did not appear within %u seconds — charge limit unavailable\n",
 			AERO_BATTERY_NAME, AERO_BATTERY_MAX_TRIES);
 		return;
 	}
@@ -272,7 +272,7 @@ int aero_battery_init(struct device *parent)
 	 * BAT1 yok — boot yarışı. Pes etmiyoruz, bekliyoruz. Hata DÖNDÜRMÜYORUZ:
 	 * bu bir başarısızlık değil, henüz tamamlanmamış bir bağlanma.
 	 */
-	pr_info("%s henuz yok (boot yarisi) — %u sn boyunca yeniden denenecek\n",
+	pr_info("%s is not ready yet (boot race) — retrying for %u seconds\n",
 		AERO_BATTERY_NAME, AERO_BATTERY_MAX_TRIES);
 	schedule_delayed_work(&aero_battery_work, HZ);
 

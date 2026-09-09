@@ -6,12 +6,9 @@
  * Bu adımda hiçbir sysfs düğümü, hwmon kanalı ya da yazma yolu YOK.
  * Doğrulama ölçütü: /sys/bus/wmi/drivers/aero_eg61h görünür, dmesg temiz.
  *
- * Neden yeni bir sürücü? Bu makinede üreticinin Linux sürücüsü yok; elde olan
- * topluluk sürücüsü (aorus_laptop) genel bir Gigabyte sürücüsü ve ÇALIŞMAYAN
- * kontroller sunuyor: yazılabilir pwm1/pwm2 düğümleri var, fan onları
- * umursamıyor (ölçüldü, üç bağımsız kanıt). Ayrıca yanlış bildiriyor —
- * 7 Eyl 2026'da fan_mode = 1 derken makine mod 4'te (PECM+0x2C = 0x09)
- * koşuyordu. Bu sürücünün değişmez kuralı: ölçülmemiş hiçbir yeteneği sunma.
+ * This driver is intentionally hardware-specific. Only measured capabilities
+ * are exposed: the firmware accepts writes to several registers that do not
+ * affect fan speed, so those registers are not presented as controls.
  *
  * Copyright (c) 2026 zixar
  */
@@ -35,7 +32,7 @@
 static bool force;
 module_param(force, bool, 0444);
 MODULE_PARM_DESC(force,
-	"DMI eslesmesi olmasa ya da aorus_laptop yuklu olsa da baglan (varsayilan: hayir)");
+	"bind even when DMI does not match or a conflicting vendor driver is loaded (default: no)");
 
 static struct aero_ec aero = {
 	.io_lock = __MUTEX_INITIALIZER(aero.io_lock),
@@ -112,7 +109,7 @@ int __aero_ec_read(u8 selector, u32 arg, u32 *value)
 	 * sıkı: Integer değilse okuma geçersizdir.
 	 */
 	if (obj->type != ACPI_TYPE_INTEGER) {
-		pr_debug("WMBC 0x%02x tamsayi degil (tip %u) — taninmayan secici?\n",
+		pr_debug("WMBC 0x%02x is not an integer (type %u) — unknown selector?\n",
 			 selector, obj->type);
 		ret = -EPROTO;
 		goto out;
@@ -212,35 +209,35 @@ static void aero_core_attach(void)
 	aero_ec_unlock();
 
 	if (ret) {
-		pr_warn("EC okuma yolu calismiyor (%d) — WMBC yaniti beklenmedik\n",
+		pr_warn("EC read path failed (%d) — unexpected WMBC response\n",
 			ret);
 		return;
 	}
 
-	pr_info("EC okuma yolu calisiyor: CPU %u C, fan %u/%u rpm\n",
+	pr_info("EC read path active: CPU %u C, fans %u/%u rpm\n",
 		cpu, rpm1, rpm2);
-	pr_info("fan modu: 0x%02x (%s)\n", pattern, aero_fan_mode_name(pattern));
+	pr_info("fan mode: 0x%02x (%s)\n", pattern, aero_fan_mode_name(pattern));
 
 	if (!parent) {
-		pr_warn("WMBD cihazi kayboldu — hwmon kurulmuyor\n");
+		pr_warn("WMBD device disappeared — hwmon will not be registered\n");
 		return;
 	}
 
 	ret = aero_hwmon_init(parent);
 	if (ret)
-		pr_warn("hwmon kaydedilemedi (%d) — sensor kanallari yok\n", ret);
+		pr_warn("could not register hwmon (%d) — sensor channels unavailable\n", ret);
 	else
-		pr_info("hwmon hazir: temp1 (CPU), fan1, fan2 — salt okunur\n");
+		pr_info("hwmon ready: temp1 (CPU), fan1, fan2 — read-only\n");
 
 	ret = aero_battery_init(parent);
 	if (ret)
-		pr_warn("sarj limiti sunulamadi (%d)\n", ret);
+		pr_warn("charge limit unavailable (%d)\n", ret);
 
 	ret = aero_profile_init(parent);
 	if (ret)
-		pr_warn("platform_profile kaydedilemedi (%d)\n", ret);
+		pr_warn("could not register platform_profile (%d)\n", ret);
 	else
-		pr_info("platform_profile hazir: yalniz 0xED (fan modu ayri kol)\n");
+		pr_info("platform_profile ready: 0xED only (fan mode is separate)\n");
 }
 
 
@@ -297,16 +294,15 @@ static void aero_device_unbound(struct wmi_device **slot)
  * ------------------------------------------------------------------------- */
 
 /*
- * aorus_laptop WMI bus'a bağlanmıyor — kendi platform cihazını kurup WMI
- * metotlarını GUID üzerinden doğrudan çağırıyor. Yani bizim bus'a bağlanmamız
- * onu engellemiyor; ikisi aynı anda yüklüyken aynı WMBD metodunu çağırırlar ve
- * özellikle fan modu yazımı sırasında (dört ayrı çağrılık dizi) yarış üretir.
- * Sessizce yan yana koşmak yerine bağlanmayı reddediyoruz.
+ * Another platform driver may create its own device and call the same WMI
+ * methods directly. If both drivers are loaded, fan-mode writes can race, so
+ * binding is refused instead of allowing two writers to run silently.
  */
 static bool aero_conflicting_driver_present(void)
 {
 	struct device *dev;
 
+	/* The legacy platform device keeps this historical kernel name. */
 	dev = bus_find_device_by_name(&platform_bus_type, NULL, "aorus_laptop");
 	if (!dev)
 		return false;
@@ -320,23 +316,23 @@ static int aero_check_platform(struct wmi_device *wdev)
 	if (!dmi_check_system(aero_dmi_table)) {
 		if (!force) {
 			dev_info(&wdev->dev,
-				 "bu makine EG61VH degil — baglanmiyorum (force=1 ile zorlanabilir)\n");
+				 "this machine is not EG61VH — refusing to bind (use force=1 to override)\n");
 			return -ENODEV;
 		}
 		dev_warn(&wdev->dev,
-			 "force=1: DMI eslesmedi, secici anlamlari DOGRULANMAMIS\n");
+			 "force=1: DMI did not match; selector meanings are UNVERIFIED\n");
 	}
 
 	if (aero_conflicting_driver_present()) {
 		if (!force) {
 			dev_err(&wdev->dev,
-				"aorus_laptop yuklu — ikisi ayni WMI metotlarini cagiriyor, yaris uretir.\n");
+				"another vendor driver is loaded — concurrent WMI calls could race.\n");
 			dev_err(&wdev->dev,
-				"once onu kaldirin:  sudo rmmod aorus_laptop\n");
+				"remove the conflicting driver first, then load aero_eg61h.\n");
 			return -EBUSY;
 		}
 		dev_warn(&wdev->dev,
-			 "force=1: aorus_laptop yuklu, fan modu yazimlari yarisabilir\n");
+			 "force=1: a conflicting driver is loaded; fan-mode writes may race\n");
 	}
 
 	return 0;
@@ -417,7 +413,7 @@ static void aero_event_notify(struct wmi_device *wdev,
 {
 	const u8 *ev = data->data;
 
-	dev_info(&wdev->dev, "EC olayi: no=0x%02x durum=0x%02x\n", ev[0], ev[1]);
+	dev_info(&wdev->dev, "EC event: code=0x%02x state=0x%02x\n", ev[0], ev[1]);
 }
 
 /*

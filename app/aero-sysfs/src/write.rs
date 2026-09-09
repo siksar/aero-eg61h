@@ -9,16 +9,16 @@
 //!
 //! ```text
 //! powerprofilesctl set power-saver  ->  platform_profile = low-power  ✓
-//! systemctl start aero-set-fan@quiet  ->  fan modu değişti            ✓
+//! systemctl start aero-set-fan@quiet  ->  fan mode değişti            ✓
 //! ```
 //!
 //! Yani bu katman **var olan brokerleri çağırıyor**, yeni bir tane kurmuyor:
 //!
 //! | eylem | köprü |
 //! |---|---|
-//! | Performans profili | `powerprofilesctl` (PPD, D-Bus + polkit) |
-//! | Fan modu | `systemctl start aero-set-fan@<mod>` (polkit kuralı) |
-//! | Şarj limiti | `systemctl start aero-set-charge@<yüzde>` (polkit kuralı) |
+//! | Performance profile | `powerprofilesctl` (PPD, D-Bus + polkit) |
+//! | Fan mode | `systemctl start aero-set-fan@<mod>` (polkit kuralı) |
+//! | Charge limit | `systemctl start aero-set-charge@<yüzde>` (polkit kuralı) |
 //!
 //! # Doğrulama nerede
 //!
@@ -55,9 +55,9 @@ pub enum Action {
 pub enum Error {
     /// Girdi bu tarafta zaten geçersiz — köprüye hiç gitmedi.
     Gecersiz(String),
-    /// Köprü çalıştırılamadı (binary yok, PATH boş…).
+    /// Köprü could not run (binary yok, PATH boş…).
     Calistirilamadi { komut: String, sebep: String },
-    /// Köprü çalıştı ama reddetti. `stderr` kullanıcıya gösterilebilir.
+    /// Köprü çalıştı ama rejected. `stderr` kullanıcıya gösterilebilir.
     Reddedildi { komut: String, stderr: String },
 }
 
@@ -66,11 +66,11 @@ impl fmt::Display for Error {
         match self {
             Self::Gecersiz(m) => write!(f, "{m}"),
             Self::Calistirilamadi { komut, sebep } => {
-                write!(f, "`{komut}` çalıştırılamadı: {sebep}")
+                write!(f, "`{komut}` could not run: {sebep}")
             }
             Self::Reddedildi { komut, stderr } => {
                 if stderr.trim().is_empty() {
-                    write!(f, "`{komut}` reddetti")
+                    write!(f, "`{komut}` rejected")
                 } else {
                     write!(f, "{}", stderr.trim())
                 }
@@ -114,7 +114,7 @@ pub fn apply(action: &Action) -> Result<(), Error> {
         Action::ChargeLimit(pct) => {
             if !(1..=100).contains(pct) {
                 return Err(Error::Gecersiz(format!(
-                    "şarj limiti 1-100 arasında olmalı, verilen: {pct}"
+                    "charge limit must be between 1 and 100, got: {pct}"
                 )));
             }
             calistir(
@@ -127,7 +127,7 @@ pub fn apply(action: &Action) -> Result<(), Error> {
             // Profil adları sürücüden okunuyor; burada uydurma bir liste
             // tutmuyoruz. Boş dize tek gerçek hata.
             if p.trim().is_empty() {
-                return Err(Error::Gecersiz("profil adı boş".into()));
+                return Err(Error::Gecersiz("profile name is empty".into()));
             }
             calistir(POWERPROFILESCTL, &["set", p])
         }

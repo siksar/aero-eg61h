@@ -1,7 +1,7 @@
 # aero_eg61h — NixOS modülü
 #
-# `aorus_laptop`'ın yerini alır. O sürücüden farkı: yalnız ölçülmüş yetenekleri
-# sunar, ve yazdığı her şeyi geri okuyup doğrular.
+# It exposes only measured capabilities and verifies every write by reading the
+# corresponding EC state back.
 #
 # Kullanım (~/nixos-zixar tarafında):
 #
@@ -10,11 +10,8 @@
 #   imports = [ "${inputs.aero-eg61h}/nix/aero-eg61h.nix" ];
 #   hardware.aero-eg61h.enable = true;
 #
-# Bunu açtığınızda `system/arch/aerox16/wmi.nix`'teki şu üç servis ve
-# `aorus-laptop` türetmesi KALDIRILMALI — ikisi aynı işi yapar ve sürücü zaten
-# `aorus_laptop` yüklüyse bağlanmayı reddeder:
-#   gigabyte-power-profile.service · gigabyte-charge-limit.service · fan-mode-cycle.service
-# `acpi_call` ve dGPU ACBT bloğu KALIYOR (bu modül onları devralıyor).
+# Enable this module instead of any other driver or service that writes the same
+# EC WMI methods. Keep the measured `acpi_call` Dynamic Boost control separate.
 { config, lib, pkgs, ... }:
 
 let
@@ -88,16 +85,14 @@ in
           AC'de uygulanacak fan modu.
 
           Varsayılan `balanced` (PECM+0x2C = 0x09) BİLEREK seçildi: makine
-          `aorus_laptop` altında `fan_mode = 1` ("sessiz") yazılıyken aslında
-          bu modda koşuyordu (7 Eyl 2026 ölçümü). `quiet` yazmak davranışı
-          DEĞİŞTİRİR — mod 4 sessiz gibi geç başlar (54 °C) ama varsayılan gibi
-          yükselebilir (%43 tavan).
+          The measured firmware table uses `balanced` as the reference default.
+          `quiet` changes the thermal curve and starts later at 54 °C.
         '';
       };
       battery = lib.mkOption {
         type = lib.types.enum fanModes;
         default = "balanced";
-        description = "Pilde uygulanacak fan modu.";
+        description = "Fan mode to apply on battery.";
       };
       game = lib.mkOption {
         type = lib.types.enum fanModes;
@@ -110,32 +105,32 @@ in
       cycle = lib.mkOption {
         type = lib.types.listOf (lib.types.enum fanModes);
         default = [ "balanced" "quiet" "gaming" "turbo" ];
-        description = "Süper+M ile dönülecek mod sırası.";
+        description = "Fan-mode cycle used by the Super+M shortcut.";
       };
     };
 
     user = lib.mkOption {
       type = lib.types.str;
       default = "zixar";
-      description = "Fan modu ve şarj limitini şifresiz değiştirebilecek kullanıcı.";
+      description = "User allowed to change fan mode and charge limit without a password.";
     };
 
     chargeLimit = lib.mkOption {
       type = lib.types.ints.between 1 100;
       default = 60;
-      description = "Pil şarj limiti (%). Standart ABI üzerinden yazılır.";
+      description = "Battery charge limit (%), written through the standard ABI.";
     };
 
     gpuBoost = {
       ac = lib.mkOption {
         type = lib.types.ints.between 0 10;
         default = 10;
-        description = "AC'de dGPU Dynamic Boost bütçesi (NPCF.ACBT = değer × 8 W).";
+        description = "dGPU Dynamic Boost budget on AC (NPCF.ACBT = value × 8 W).";
       };
       battery = lib.mkOption {
         type = lib.types.ints.between 0 10;
         default = 0;
-        description = "Pilde dGPU Dynamic Boost bütçesi.";
+        description = "dGPU Dynamic Boost budget on battery.";
       };
     };
   };
@@ -144,8 +139,7 @@ in
     boot.extraModulePackages = [ aero-eg61h config.boot.kernelPackages.acpi_call ];
     boot.kernelModules = [ "aero-eg61h" "acpi_call" ];
 
-    # İkisi aynı WMI metotlarını çağırıyor. Sürücü çakışmayı kendi tespit edip
-    # -EBUSY ile reddediyor, ama niyeti açık kılmak için blacklist.
+    # Prevent a second EC writer from claiming the same WMI methods.
     boot.blacklistedKernelModules = [ "aorus-laptop" ];
 
     # ---------------------------------------------------------------------
@@ -154,7 +148,7 @@ in
     # udev olayıyla tetiklenir, yoklama YOK — güç katmanının deseni bu
     # (4.28 W boşta bütçesi).
     systemd.services.aero-power-profile = {
-      description = "AC/BAT fan modu + dGPU boost bütçesi (aero_eg61h)";
+      description = "AC/BAT fan mode + dGPU boost budget (aero_eg61h)";
       wantedBy = [ "multi-user.target" ];
       after = [ "systemd-modules-load.service" ];
       serviceConfig = {
@@ -177,7 +171,7 @@ in
           if ${pkgs.systemd}/bin/systemctl is-active --quiet game-perf.service; then
             :
           else
-            echo "$FAN" > "$F" || echo "aero: fan modu yazilamadi" >&2
+            echo "$FAN" > "$F" || echo "aero: could not write fan mode" >&2
           fi
 
           # dGPU Dynamic Boost bütçesi hâlâ ham WMI: sürücü dGPU kollarını
@@ -194,7 +188,7 @@ in
     # Şarj limiti
     # ---------------------------------------------------------------------
     systemd.services.aero-charge-limit = {
-      description = "Pil şarj limiti %%${toString cfg.chargeLimit} (aero_eg61h)";
+      description = "Battery charge limit %%${toString cfg.chargeLimit} (aero_eg61h)";
       wantedBy = [ "multi-user.target" ];
       after = [ "systemd-modules-load.service" ];
       serviceConfig = {
@@ -203,7 +197,7 @@ in
           # BCPS (charge_mode) sürücüde SUNULMUYOR: anlamı DSDT'den
           # doğrulanamıyor ve standart bir karşılığı yok. Ama şarj limitinin
           # etkili olması buna bağlı görünüyor, o yüzden ham WMI ile yazılıyor.
-          # Değer 4 TAHMİN DEĞİL, ÖLÇÜM: aorus_laptop'ın charge_mode = 1'i
+          # Değer 4 TAHMİN DEĞİL, ÖLÇÜM: the legacy driver's charge_mode = 1'i
           # EC'de BCPS = 4 üretiyordu (WMBC 0x64 = 0x04, 7 Eyl 2026).
           if [ -w /proc/acpi/call ]; then
             echo '\_SB.PCI0.AMW0.WMBD 0 0x64 4' > /proc/acpi/call
@@ -222,7 +216,7 @@ in
     # Süper+M fan modu döngüsü
     # ---------------------------------------------------------------------
     systemd.services.aero-fan-cycle = {
-      description = "aero_eg61h fan modunu döndür + masaüstü bildirimi";
+      description = "Cycle the aero_eg61h fan mode and notify the desktop";
       after = [ "systemd-modules-load.service" ];
       serviceConfig = {
         Type = "oneshot";
@@ -243,7 +237,7 @@ in
           echo "$next" > "$F" || exit 1
 
           # Ne yazdığımızı değil, EC'nin GERÇEKTEN ne koştuğunu bildir.
-          # (aorus_laptop'ın hatası tam olarak buydu: yazdığını bildiriyordu.)
+          # (the legacy driver's behavior tam olarak buydu: yazdığını bildiriyordu.)
           shown=$(${pkgs.coreutils}/bin/cat "$F")
           uid=$(${pkgs.coreutils}/bin/id -u ${cfg.user} 2>/dev/null || echo 1000)
           ${pkgs.util-linux}/bin/runuser -u ${cfg.user} -- \
@@ -278,7 +272,7 @@ in
     # olurdu — kural yalnız "bu birimi başlatabilir mi"yi biliyor, "hangi
     # değerle"yi değil.
     systemd.services."aero-set-fan@" = {
-      description = "Fan modunu %i yap (aero_eg61h)";
+      description = "Set fan mode to %i (aero_eg61h)";
       serviceConfig.Type = "oneshot";
       scriptArgs = "%i";
       script = ''
@@ -286,31 +280,31 @@ in
         # Beyaz liste: sysfs'e yalnız bilinen beş isimden biri gider.
         case "$mode" in
           ${lib.concatStringsSep "|" fanModes}) ;;
-          *) echo "gecersiz fan modu: $mode" >&2; exit 1 ;;
+          *) echo "invalid fan mode: $mode" >&2; exit 1 ;;
         esac
         F=$(echo /sys/bus/wmi/devices/ABBC0F75-*/fan_mode)
-        [ -w "$F" ] || { echo "fan_mode dugumu yok — surucu yuklu mu?" >&2; exit 1; }
+        [ -w "$F" ] || { echo "fan_mode node is missing — is the driver loaded?" >&2; exit 1; }
         echo "$mode" > "$F"
         # Sürücü yazımı zaten geri okuyup doğruluyor; biz de bakalım.
         got=$(cat "$F")
-        [ "$got" = "$mode" ] || { echo "yazildi $mode ama $got okunuyor" >&2; exit 1; }
+        [ "$got" = "$mode" ] || { echo "wrote $mode but read back $got" >&2; exit 1; }
       '';
     };
 
     systemd.services."aero-set-charge@" = {
-      description = "Sarj limitini %i yap (aero_eg61h)";
+      description = "Set charge limit to %i (aero_eg61h)";
       serviceConfig.Type = "oneshot";
       scriptArgs = "%i";
       script = ''
         pct="$1"
         case "$pct" in
-          ""|*[!0-9]*) echo "sayi degil: $pct" >&2; exit 1 ;;
+          ""|*[!0-9]*) echo "not a number: $pct" >&2; exit 1 ;;
         esac
         # Sürücü 0'ı zaten reddediyor (anlamı ölçülmedi); burada da durduruyoruz
         # ki geçersiz değer sysfs'e hiç gitmesin.
-        [ "$pct" -ge 1 ] && [ "$pct" -le 100 ] || { echo "1-100 disinda: $pct" >&2; exit 1; }
+        [ "$pct" -ge 1 ] && [ "$pct" -le 100 ] || { echo "outside 1-100: $pct" >&2; exit 1; }
         N=/sys/class/power_supply/BAT1/charge_control_end_threshold
-        [ -w "$N" ] || { echo "sarj limiti dugumu yok" >&2; exit 1; }
+        [ -w "$N" ] || { echo "charge-limit node is missing" >&2; exit 1; }
         echo "$pct" > "$N"
       '';
     };

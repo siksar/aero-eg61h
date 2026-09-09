@@ -3,11 +3,10 @@
 //!
 //! # Tasarımın tek kuralı: HER DÜĞÜM OPSİYONEL
 //!
-//! Sürücü yüklü olmayabilir (henüz `~/nixos-zixar` geçişi yapılmadı — o zaman
-//! boot'ta `aorus_laptop` gelir, bizimki gelmez), ya da yüklü ama bir katmanı
-//! kurulmamış olabilir. Bu katman hiçbir durumda hata döndürmez ve panik etmez:
-//! okunamayan her şey `None` olur ve sebebi [`Snapshot::problems`] içinde
-//! insanca yazılır. GUI o listeyi üst şeritte gösterir.
+//! The driver may be absent or only partially installed. This layer never
+//! panics when an optional interface is unavailable: unreadable values become
+//! `None` and the reason is reported through [`Snapshot::problems`]. The GUI
+//! shows that list in its status area.
 //!
 //! Bu, iki iş kolunun buluştuğu sözleşme: GUI, NixOS geçişini beklemeden
 //! geliştirilebilir ve geçiş yapılmamış bir makinede de anlamlı bir şey gösterir.
@@ -25,7 +24,7 @@ pub use write::{Action, Error as WriteError, apply};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// `WMBD` GUID'i — fan modu düğümü bu cihazın altında.
+/// `WMBD` GUID'i — fan mode düğümü bu cihazın altında.
 /// Sondaki örnek indeksi (`-2`) `_WDG` sırasından geliyor; sabit varsaymıyoruz,
 /// önekle arıyoruz.
 const WMBD_GUID_PREFIX: &str = "ABBC0F75-8EA1-11D1-00A0-C90629100000";
@@ -34,7 +33,7 @@ const HWMON_NAME: &str = "aero_eg61h";
 const BATTERY: &str = "BAT1";
 const AC_ADAPTER: &str = "ACAD";
 
-/// Fan modu. İsimler sürücünün `fan_mode_choices` çıktısıyla birebir.
+/// Fan mode. İsimler sürücünün `fan_mode_choices` çıktısıyla birebir.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FanMode {
     /// 54 °C'de başlar, tavan %29
@@ -74,22 +73,22 @@ impl FanMode {
     /// Kullanıcıya gösterilecek ad.
     pub fn label(self) -> &'static str {
         match self {
-            Self::Quiet => "Sessiz",
-            Self::Balanced => "Dengeli",
-            Self::Responsive => "Duyarlı",
-            Self::Gaming => "Performans",
-            Self::Turbo => "Maksimum",
+            Self::Quiet => "Quiet",
+            Self::Balanced => "Balanced",
+            Self::Responsive => "Responsive",
+            Self::Gaming => "Performance",
+            Self::Turbo => "Turbo",
         }
     }
 
     /// Eğrinin tek cümlelik özeti. Firmware tablolarından (ölçüldü).
     pub fn describe(self) -> &'static str {
         match self {
-            Self::Quiet => "54 °C'de başlar, tavan %29",
-            Self::Balanced => "54 °C'de başlar, tavan %43",
-            Self::Responsive => "40 °C'de başlar, tavan %43",
-            Self::Gaming => "40 °C'de başlar, tavan %53",
-            Self::Turbo => "36 °C'de başlar, düz %63",
+            Self::Quiet => "starts at 54 °C, maximum 29%",
+            Self::Balanced => "starts at 54 °C, maximum 43%",
+            Self::Responsive => "starts at 40 °C, maximum 43%",
+            Self::Gaming => "starts at 40 °C, maximum 53%",
+            Self::Turbo => "starts at 36 °C, fixed 63%",
         }
     }
 }
@@ -192,11 +191,10 @@ impl Snapshot {
     fn read_hwmon(&mut self, root: &Path) {
         let Some(dir) = find_by_name(root, "hwmon", HWMON_NAME) else {
             self.miss(
-                "Sıcaklık ve fan devri",
+                "Temperature and fan speed",
                 format!(
-                    "`{HWMON_NAME}` hwmon cihazı yok — sürücü yüklü değil. \
-                     Yüklemek için: sudo rmmod aorus_laptop && \
-                     sudo insmod ~/aero-eg61h/kernel/aero-eg61h.ko"
+                    "`{HWMON_NAME}` hwmon device is missing — the driver is not loaded. \
+                     Load it with: sudo insmod ~/aero-eg61h/kernel/aero-eg61h.ko"
                 ),
             );
             return;
@@ -213,8 +211,8 @@ impl Snapshot {
     fn read_fan_mode(&mut self, root: &Path) {
         let Some(dev) = find_wmi_device(root, WMBD_GUID_PREFIX) else {
             self.miss(
-                "Fan modu",
-                "WMBD cihazı (ABBC0F75-…) sysfs'te yok — sürücü WMI bus'a bağlanmamış.",
+                "Fan mode",
+                "The WMBD device (ABBC0F75-…) is missing from sysfs — the driver is not bound to the WMI bus.",
             );
             return;
         };
@@ -222,8 +220,8 @@ impl Snapshot {
         let node = dev.join("fan_mode");
         match read_trim(&node) {
             None => self.miss(
-                "Fan modu",
-                "WMBD cihazı var ama `fan_mode` düğümü yok — sürücü eski bir sürüm olabilir.",
+                "Fan mode",
+                "The WMBD device exists but has no `fan_mode` node — the driver may be outdated.",
             ),
             Some(raw) => match FanMode::from_sysfs(&raw) {
                 Some(m) => self.fan_mode = Some(m),
@@ -232,8 +230,8 @@ impl Snapshot {
                     // Uydurmuyoruz — ham değeri taşıyoruz.
                     self.fan_mode_raw_unknown = Some(raw.clone());
                     self.miss(
-                        "Fan modu",
-                        format!("EC tanınmayan bir desende (`{raw}`) — beklenmedik durum."),
+                        "Fan mode",
+                        format!("The EC returned an unknown pattern (`{raw}`) — unexpected state."),
                     );
                 }
             },
@@ -251,10 +249,10 @@ impl Snapshot {
         match read_num::<u8>(bat.join("charge_control_end_threshold")) {
             Some(v) => self.charge_limit_pct = Some(v),
             None => self.miss(
-                "Şarj limiti",
+                "Charge limit",
                 format!(
-                    "`{BATTERY}/charge_control_end_threshold` yok — sürücünün \
-                     power_supply uzantısı kurulmamış."
+                    "`{BATTERY}/charge_control_end_threshold` is missing — the driver's \
+                     power_supply extension is not available."
                 ),
             ),
         }
@@ -263,8 +261,8 @@ impl Snapshot {
     fn read_platform_profile(&mut self, root: &Path) {
         let Some(dir) = find_by_name(root, "platform-profile", HWMON_NAME) else {
             self.miss(
-                "Performans profili",
-                "Sürücünün platform_profile handler'ı kayıtlı değil.",
+                "Performance profile",
+                "The driver's platform_profile handler is not registered.",
             );
             return;
         };
@@ -342,7 +340,7 @@ mod tests {
     #[test]
     fn taninmayan_fan_modu_none() {
         // Sürücü tanınmayan desende `unknown` yazıyor; uydurma bir moda
-        // eşlemek aorus_laptop'ın hatası olurdu.
+        // eşlemek the legacy driver's behavior olurdu.
         assert_eq!(FanMode::from_sysfs("unknown"), None);
         assert_eq!(FanMode::from_sysfs("5"), None);
         assert_eq!(FanMode::from_sysfs(""), None);
@@ -377,10 +375,10 @@ mod tests {
 
         // Dört yeteneğin dördü de sebebiyle bildirilmeli.
         let neler: Vec<_> = s.problems.iter().map(|p| p.what).collect();
-        assert!(neler.contains(&"Sıcaklık ve fan devri"), "{neler:?}");
-        assert!(neler.contains(&"Fan modu"), "{neler:?}");
-        assert!(neler.contains(&"Şarj limiti"), "{neler:?}");
-        assert!(neler.contains(&"Performans profili"), "{neler:?}");
+        assert!(neler.contains(&"Temperature and fan speed"), "{neler:?}");
+        assert!(neler.contains(&"Fan mode"), "{neler:?}");
+        assert!(neler.contains(&"Charge limit"), "{neler:?}");
+        assert!(neler.contains(&"Performance profile"), "{neler:?}");
 
         // Sebepler boş olmamalı — kullanıcı ne yapacağını bilmeli.
         for p in &s.problems {
@@ -401,7 +399,7 @@ mod tests {
         assert!(s.driver_present);
         assert_eq!(s.fan_mode, None, "tanınmayan desen bir moda EŞLENMEMELİ");
         assert_eq!(s.fan_mode_raw_unknown.as_deref(), Some("unknown"));
-        assert!(s.problems.iter().any(|p| p.what == "Fan modu"));
+        assert!(s.problems.iter().any(|p| p.what == "Fan mode"));
     }
 
     /// Sürücü yüklü ama platform_profile katmanı kurulmamış (kısmi durum).
@@ -414,7 +412,7 @@ mod tests {
         assert!(s.driver_present, "hwmon hâlâ var");
         assert_eq!(s.cpu_temp_c, Some(51), "diğer okumalar etkilenmemeli");
         assert_eq!(s.problems.len(), 1);
-        assert_eq!(s.problems[0].what, "Performans profili");
+        assert_eq!(s.problems[0].what, "Performance profile");
     }
 
     /// `custom` geçerli bir değer — sürücü henüz yazmadı demek, hata değil.

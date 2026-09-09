@@ -42,7 +42,7 @@
  * yüklendiğinde EC'nin hangi profilde olduğunu BİLMİYORUZ, o yüzden başlangıç
  * değeri `PLATFORM_PROFILE_CUSTOM` — ABI'nin "standart profillerden birine
  * karşılık gelmeyen durum" karşılığı. Uydurma bir değer döndürmek
- * (`balanced` demek gibi) `aorus_laptop`'ın hatasının aynısı olurdu.
+ * (`balanced` demek gibi) the legacy driver's behaviornın aynısı olurdu.
  *
  * Probe'ta bir profil YAZMIYORUZ: kullanıcının dokunmadığı bir ayarı sürücü
  * zorlamaz.

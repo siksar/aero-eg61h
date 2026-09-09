@@ -18,7 +18,7 @@
 //! # Boşta güç
 //!
 //! Örnekleme yalnız uygulama açıkken ve görünür panele göre yapılıyor
-//! (Durum/Fan'da 2 sn, diğerlerinde 5 sn). Uygulama kapanınca hiçbir şey
+//! (Status/Fan'da 2 sn, diğerlerinde 5 sn). Applyma kapanınca hiçbir şey
 //! arkada kalmıyor — 4.28 W boşta bütçesi kuralı.
 
 mod egri;
@@ -36,17 +36,17 @@ const APP_ID: &str = "dev.zixar.AeroControl";
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Panel {
     OnAyarlar,
-    Durum,
+    Status,
     FanTermal,
     FanEgrisi,
-    GucPerformans,
-    Pil,
+    GucPerformance,
+    Battery,
     Hakkinda,
 }
 
 /// Basit menünün "tavsiye edilen ayar" paketleri (`PLAN.md` §5).
 ///
-/// Her biri fan modu + performans profilini TUTARLI bir paket olarak kuruyor.
+/// Her biri fan mode + performans profilini TUTARLI bir paket olarak kuruyor.
 /// Amacı bir şeyi bozamamak: ham sayı yok, isimlendirilmiş kombinasyon var.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct OnAyar {
@@ -61,32 +61,32 @@ struct OnAyar {
 /// `amd-pmf`'e de yazılıyordu ve orada ne yaptığı ölçülmemişti.)
 const ON_AYARLAR: &[OnAyar] = &[
     OnAyar {
-        ad: "Sessiz",
-        aciklama: "Okuma, yazma, pil ömrü. Fan 54 °C'ye kadar durur.",
+        ad: "Quiet",
+        aciklama: "Quiet operation and longer battery life. Fans start at 54 °C.",
         fan: FanMode::Quiet,
         profil: "low-power",
     },
     OnAyar {
-        ad: "Dengeli",
-        aciklama: "Günlük kullanım. Geç başlar ama gerekince yükselir — varsayılan.",
+        ad: "Balanced",
+        aciklama: "Everyday use. Starts late and ramps up when needed — the default.",
         fan: FanMode::Balanced,
         profil: "balanced",
     },
     OnAyar {
-        ad: "Duyarlı",
-        aciklama: "Erken soğutma isteyen. Fan 40 °C'de devreye girer.",
+        ad: "Responsive",
+        aciklama: "Earlier cooling. Fans start at 40 °C.",
         fan: FanMode::Responsive,
         profil: "balanced",
     },
     OnAyar {
-        ad: "Performans",
-        aciklama: "Oyun ve derleme. Daha yüksek güç bütçesi, daha sesli fan.",
+        ad: "Performance",
+        aciklama: "Games and builds. Higher power budget and louder fans.",
         fan: FanMode::Gaming,
         profil: "performance",
     },
     OnAyar {
-        ad: "Maksimum",
-        aciklama: "Kısa süreli tam yük. Fan düz %63 — sürekli kullanım için değil.",
+        ad: "Turbo",
+        aciklama: "Short bursts of full load. Fans run at a flat 63% — not for continuous use.",
         fan: FanMode::Turbo,
         profil: "performance",
     },
@@ -96,7 +96,7 @@ const ON_AYARLAR: &[OnAyar] = &[
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EgriSecim {
     /// Makinede etkin olan mod izleniyor — kullanıcı bir şey seçmedi.
-    Etkin,
+    Active,
     /// Kullanıcı bir modu sabitledi; artık `Tik` bunu geri almıyor.
     Sabit(FanMode),
 }
@@ -115,26 +115,26 @@ const EGRI_MODLARI: [FanMode; 5] = [
 enum Message {
     /// Zamanlayıcı tetikledi — sysfs'i yeniden oku.
     Tik,
-    /// Bir ön ayar paketini uygula (fan modu + profil).
-    OnAyarUygula(usize),
-    /// Tek bir fan modunu uygula.
+    /// Bir ön ayar paketini uygula (fan mode + profil).
+    OnAyarApply(usize),
+    /// Tek bir fan modenu uygula.
     FanModu(FanMode),
     /// Tek bir profili uygula.
     Profil(String),
-    /// Şarj limiti kaydırıcısı sürükleniyor (henüz yazma yok).
+    /// Charge limit kaydırıcısı sürükleniyor (henüz yazma yok).
     SarjKaydir(u8),
     /// Kaydırıcı bırakıldı — şimdi yaz.
-    SarjUygula,
+    SarjApply,
     /// Hata şeridini kapat.
-    HataKapat,
+    HataDismiss,
 
     /// Eğri panelinde gösterilecek mod (0 = etkin modu izle).
     EgriMod(usize),
-    /// "Beş modu birden" anahtarı.
+    /// "Compare all five modes" anahtarı.
     EgriKarsilastir(bool),
     /// Karşılaştırma kipinde hangi fanın eğrileri çizilsin.
     EgriFan(usize),
-    /// Ham tablo ve kaynak kanıtı bölümü.
+    /// Raw table and source kanıtı bölümü.
     EgriHam(bool),
 }
 
@@ -164,13 +164,13 @@ struct App {
 /// nav'da o satırlar boş kalıyordu. Simgeler bu yüzden depoda ve ikiliye
 /// gömülü: tema ne olursa olsun çiziliyorlar.
 ///
-/// Diğer üç panel (`Ön Ayarlar`, `Pil`, `Hakkında`, `Durum`) temadan çözülen
+/// Diğer üç panel (`Presets`, `Battery`, `About`, `Status`) temadan çözülen
 /// standart adları kullanmaya devam ediyor — orada gömmeye gerek yok.
 fn gomulu_simge(svg: &'static [u8]) -> widget::icon::Icon {
     widget::icon::from_svg_bytes(svg).symbolic(true).icon()
 }
 
-/// Seçili modun iki fan tablosunu yan yana, tek monospace blokta.
+/// Selectili modun iki fan tablosunu yan yana, tek monospace blokta.
 ///
 /// Kaynak ofseti ve kural kaydı da burada. Bu, "bu eğri nereden geliyor"
 /// sorusunun cevabının bir ÇIKARIM değil bir ALINTI olduğu yer: kaydı üreteç
@@ -178,7 +178,7 @@ fn gomulu_simge(svg: &'static [u8]) -> widget::icon::Icon {
 /// kurmuyor.
 fn ham_tablo(m: FanMode) -> String {
     let (Some(a), Some(b)) = (curves::egri(m, 0), curves::egri(m, 1)) else {
-        return "Bu mod için tablo yok.".into();
+        return "No table is available for this mode.".into();
     };
     let onaltilik = |k: &[u8; 8]| {
         k.iter()
@@ -189,13 +189,13 @@ fn ham_tablo(m: FanMode) -> String {
 
     let mut o = String::with_capacity(1024);
     o.push_str(&format!(
-        "EC iç mod  0x{:02X}\nKural tablosu  0x{:05X}\n\n",
+        "EC internal mode  0x{:02X}\nRule table  0x{:05X}\n\n",
         a.ic_mod(),
         curves::KURAL_TABLOSU
     ));
     for (ad, e) in [("Fan 1", a), ("Fan 2", b)] {
         o.push_str(&format!(
-            "{ad}  kaynak 0x{:05X}  kural {}\n",
+            "{ad}  source 0x{:05X}  rule {}\n",
             e.kaynak,
             onaltilik(&e.kural)
         ));
@@ -218,10 +218,10 @@ fn ham_tablo(m: FanMode) -> String {
         ));
     }
     o.push_str(
-        "\nKural kaydı düzeni: { b0, 00, b2, iç_mod, 00, FF, adres_hi, adres_lo }\n\
-         b0 grup içindeki tabloyu seçiyor: 00 = fan 0, 10 = fan 1.\n\
-         b0 = 30/40 tabloları HİÇ görülmedi (bütün ölçümler pilde yapıldı).\n\
-         t2 sütununun hangi sensöre baktığı ölçülmedi; grafik yalnız t1'i kullanıyor.",
+        "\nRule record layout: { b0, 00, b2, internal_mode, 00, FF, address_hi, address_lo }\n\
+         b0 selects a table within the group: 00 = fan 0, 10 = fan 1.\n\
+         b0 = 30/40 tables were never observed (all measurements were on battery).\n\
+         The sensor represented by the t2 column was not measured; the graph uses t1 only.",
     );
     o
 }
@@ -231,7 +231,7 @@ impl App {
         self.nav
             .active_data::<Panel>()
             .copied()
-            .unwrap_or(Panel::Durum)
+            .unwrap_or(Panel::Status)
     }
 
     /// Eksik yetenekleri anlatan üst şerit. `aero-sysfs`'in sözleşmesinin
@@ -251,7 +251,7 @@ impl App {
             widget::container(
                 widget::column::with_capacity(8)
                     .spacing(8)
-                    .push(widget::text::title4("Eksik yetenekler"))
+                    .push(widget::text::title4("Missing capabilities"))
                     .push(col),
             )
             .class(cosmic::theme::Container::Card)
@@ -273,7 +273,7 @@ impl App {
 
     /// Eylemi köprüye gönderir ve durumu HEMEN geri okur.
     /// Yazdığımızı değil sistemin okuduğunu göstermek bu uygulamanın
-    /// varlık sebebi — `aorus_laptop`'ın hatası tam olarak yazdığını
+    /// varlık sebebi — the legacy driver's behavior tam olarak yazdığını
     /// bildirmekti.
     fn uygula(&mut self, a: Action) {
         match apply(&a) {
@@ -295,7 +295,7 @@ impl App {
                     .spacing(12)
                     .align_y(Alignment::Center)
                     .push(widget::text::body(h.clone()).width(Length::Fill))
-                    .push(widget::button::text("Kapat").on_press(Message::HataKapat)),
+                    .push(widget::button::text("Dismiss").on_press(Message::HataDismiss)),
             )
             .class(cosmic::theme::Container::Card)
             .padding(16)
@@ -308,19 +308,19 @@ impl App {
     fn on_ayarlar(&self) -> Element<'_, Message> {
         let s = &self.snap;
         let mut sec = widget::settings::section()
-            .title("Ön ayarlar")
+            .title("Presets")
             .add(widget::text::caption(
-                "Her ön ayar fan modu ile performans profilini tutarlı bir paket \
-                 olarak kurar. Ayrı ayrı ayarlamak için diğer panellere bakın.",
+                "Each preset applies a consistent fan mode and performance profile. \
+                     Use the other panels for individual controls.",
             ));
 
         for (i, o) in ON_AYARLAR.iter().enumerate() {
             let etkin =
                 s.fan_mode == Some(o.fan) && s.platform_profile.as_deref() == Some(o.profil);
             let dugme = if etkin {
-                widget::button::suggested("Etkin")
+                widget::button::suggested("Active")
             } else {
-                widget::button::standard("Uygula").on_press(Message::OnAyarUygula(i))
+                widget::button::standard("Apply").on_press(Message::OnAyarApply(i))
             };
             sec = sec.add(
                 widget::settings::item::builder(o.ad)
@@ -329,12 +329,12 @@ impl App {
             );
         }
 
-        let sarj = widget::settings::section().title("Şarj limiti").add(
+        let sarj = widget::settings::section().title("Charge limit").add(
             widget::settings::item::builder(format!("%{}", self.sarj_taslak))
-                .description("Pil ömrü için 60 tavsiye edilir; yolculuk öncesi 100 yapın.")
+                .description("60 is recommended for battery longevity; use 100 before a long trip.")
                 .control(
                     widget::slider(1..=100u8, self.sarj_taslak, Message::SarjKaydir)
-                        .on_release(Message::SarjUygula)
+                        .on_release(Message::SarjApply)
                         .width(Length::Fixed(240.0)),
                 ),
         );
@@ -349,9 +349,9 @@ impl App {
     fn durum(&self) -> Element<'_, Message> {
         let s = &self.snap;
         widget::settings::section()
-            .title("Canlı")
+            .title("Live")
             .add(self.satir(
-                "CPU sıcaklığı",
+                "CPU temperature",
                 s.cpu_temp_c.map_or_else(Self::yok, |v| format!("{v} °C")),
             ))
             .add(self.satir(
@@ -363,30 +363,30 @@ impl App {
                 s.fan2_rpm.map_or_else(Self::yok, |v| format!("{v} rpm")),
             ))
             .add(self.satir(
-                "Güç kaynağı",
+                "Power source",
                 match s.ac_online {
-                    Some(true) => "Fişte".into(),
-                    Some(false) => "Pilde".into(),
+                    Some(true) => "AC power".into(),
+                    Some(false) => "Battery".into(),
                     None => Self::yok(),
                 },
             ))
             .add(self.satir(
-                "Fan modu",
+                "Fan mode",
                 s.fan_mode.map_or_else(
                     || {
                         s.fan_mode_raw_unknown
                             .clone()
-                            .map_or_else(Self::yok, |r| format!("tanınmıyor ({r})"))
+                            .map_or_else(Self::yok, |r| format!("unknown ({r})"))
                     },
                     |m| m.label().to_string(),
                 ),
             ))
             .add(self.satir(
-                "Performans profili",
+                "Performance profile",
                 s.platform_profile.clone().unwrap_or_else(Self::yok),
             ))
             .add(self.satir(
-                "Pil",
+                "Battery",
                 s.battery_pct.map_or_else(Self::yok, |v| format!("%{v}")),
             ))
             .into()
@@ -395,18 +395,18 @@ impl App {
     fn fan_termal(&self) -> Element<'_, Message> {
         let s = &self.snap;
 
-        let mut modlar = widget::settings::section().title("Fan modu");
+        let mut modlar = widget::settings::section().title("Fan mode");
         if s.fan_mode_choices.is_empty() {
             modlar = modlar.add(widget::text::body(
-                "Sürücü mod listesi vermiyor — yüklü değil ya da eski bir sürüm.",
+                "The driver did not provide a mode list — it may be missing or outdated.",
             ));
         } else {
             for m in &s.fan_mode_choices {
                 let secili = s.fan_mode == Some(*m);
                 let dugme = if secili {
-                    widget::button::suggested("Etkin")
+                    widget::button::suggested("Active")
                 } else {
-                    widget::button::standard("Seç").on_press(Message::FanModu(*m))
+                    widget::button::standard("Select").on_press(Message::FanModu(*m))
                 };
                 modlar = modlar.add(
                     widget::settings::item::builder(m.label())
@@ -420,9 +420,9 @@ impl App {
             .spacing(24)
             .push(
                 widget::settings::section()
-                    .title("Canlı")
+                    .title("Live")
                     .add(self.satir(
-                        "CPU sıcaklığı",
+                        "CPU temperature",
                         s.cpu_temp_c.map_or_else(Self::yok, |v| format!("{v} °C")),
                     ))
                     .add(self.satir(
@@ -436,12 +436,12 @@ impl App {
             )
             .push(modlar)
             .push(widget::text::caption(
-                "Fan hızı bu firmware'de doğrudan ayarlanamıyor; yalnız hangi \
-                 eğrinin kullanılacağı seçilebiliyor. (Ölçüldü: duty yazmaçları \
-                 yazımı kabul ediyor ama fan umursamıyor.)",
+                "Fan speed cannot be set directly on this firmware; only the active \
+                 curve can be selected. (Measured: duty registers accept writes, \
+                 but the fans do not respond.)",
             ))
             .push(widget::text::caption(
-                "Bir modun eğrisini ŞEKİL olarak görmek için «Fan Eğrisi» paneline bakın.",
+                "Open Fan curves to see a mode as a graph.",
             ))
             .into()
     }
@@ -459,10 +459,10 @@ impl App {
         let s = &self.snap;
 
         let gosterilen = match self.egri_secim {
-            EgriSecim::Etkin => s.fan_mode,
+            EgriSecim::Active => s.fan_mode,
             EgriSecim::Sabit(m) => Some(m),
         };
-        // Etkin mod okunamıyorsa tek bir eğri çizmek uydurma olurdu; beş modu
+        // Active mod okunamıyorsa tek bir eğri çizmek uydurma olurdu; beş modu
         // birden göstermek hem doğru hem daha faydalı.
         let mod_bilinmiyor = gosterilen.is_none();
         let karsilastir = self.egri_karsilastir || mod_bilinmiyor;
@@ -508,26 +508,26 @@ impl App {
         // --- görünüm kontrolleri: hiçbiri makinede bir şey DEĞİŞTİRMİYOR ---
         let mut secenekler: Vec<String> = Vec::with_capacity(6);
         secenekler.push(match s.fan_mode {
-            Some(m) => format!("Etkin mod — {}", m.label()),
-            None => "Etkin mod — okunamıyor".into(),
+            Some(m) => format!("Active mode — {}", m.label()),
+            None => "Active mode — unavailable".into(),
         });
         secenekler.extend(EGRI_MODLARI.iter().map(|m| m.label().to_string()));
 
         let secili = match self.egri_secim {
-            EgriSecim::Etkin => 0,
+            EgriSecim::Active => 0,
             EgriSecim::Sabit(m) => 1 + EGRI_MODLARI.iter().position(|x| *x == m).unwrap_or(0),
         };
 
         let mut gorunum = widget::settings::section()
-            .title("Görünüm")
+            .title("View")
             .add(
-                widget::settings::item::builder("Gösterilen eğri")
-                    .description("Yalnız çizimi değiştirir — makinede hiçbir ayar yapmaz.")
+                widget::settings::item::builder("Displayed curve")
+                    .description("Changes the graph only; it does not change any machine setting.")
                     .control(widget::dropdown(secenekler, Some(secili), Message::EgriMod)),
             )
             .add(
-                widget::settings::item::builder("Beş modu birden")
-                    .description("Mod seçiminin ne değiştirdiğini tek bakışta gösterir.")
+                widget::settings::item::builder("Compare all five modes")
+                    .description("Compare the effect of each mode at a glance.")
                     .control(
                         widget::toggler(self.egri_karsilastir).on_toggle(Message::EgriKarsilastir),
                     ),
@@ -535,8 +535,8 @@ impl App {
 
         if karsilastir {
             gorunum = gorunum.add(
-                widget::settings::item::builder("Hangi fan")
-                    .description("Karşılaştırmada tek fan çiziliyor — iki fanın tabloları farklı.")
+                widget::settings::item::builder("Fan to compare")
+                    .description("The comparison draws one fan; the two fan tables differ.")
                     .control(widget::dropdown(
                         vec!["Fan 1".to_string(), "Fan 2".to_string()],
                         Some(self.egri_fan as usize),
@@ -546,16 +546,16 @@ impl App {
         }
 
         gorunum = gorunum.add(
-            widget::settings::item::builder("Ham tablo ve kaynak")
-                .description("14 satır × 3 sütun, kaynak ofseti, kural tablosu kaydı.")
+            widget::settings::item::builder("Raw table and source")
+                .description("14 rows × 3 columns, source offsets, and rule-table record.")
                 .control(widget::toggler(self.egri_ham).on_toggle(Message::EgriHam)),
         );
 
         // --- canlı okuma: grafiğin DIŞINDA, sayı olarak (PLAN §4.1) ---
         let mut canli = widget::settings::section()
-            .title("Canlı")
+            .title("Live")
             .add(self.satir(
-                "CPU sıcaklığı",
+                "CPU temperature",
                 s.cpu_temp_c.map_or_else(Self::yok, |v| format!("{v} °C")),
             ))
             .add(self.satir(
@@ -576,7 +576,7 @@ impl App {
                 curves::egri(m, fan).map_or_else(Self::yok, |e| format!("%{}", e.duty(t)))
             };
             canli = canli.add(self.satir(
-                "Beklenen duty (Fan 1 / Fan 2)",
+                "Expected duty (Fan 1 / Fan 2)",
                 format!("{} / {}", d(0), d(1)),
             ));
         }
@@ -585,23 +585,23 @@ impl App {
 
         if mod_bilinmiyor {
             col = col.push(widget::text::body(
-                "Etkin fan modu okunamadı, o yüzden beş mod birden çiziliyor — \
-                 tek bir eğri seçmek uydurma olurdu.",
+                "The active fan mode could not be read, so all five modes are shown; \
+                 choosing one would be guesswork.",
             ));
         }
 
         col = col.push(grafik);
 
         col = col.push(widget::text::caption(
-            "Basamak çiziliyor, eğri değil: EŞİKLER ölçüldü, iki eşik ARASINDAKİ \
-             davranış (interpolasyon mu, eşik mi) ölçülmedi. Grafikteki şekil, \
-             uygulamanın hesabıyla birebir aynı — arada ikinci bir yorum yok.",
+            "This is a step plot, not an interpolated curve: thresholds were measured, \
+             but behavior between thresholds was not. The graph exactly matches the \
+             application calculation.",
         ));
 
         col = col.push(widget::text::caption(
-            "Dikey düz çizgi CPU sıcaklığı, kesik çizgi farenin gösterdiği yer. \
-             Eğrinin sıcaklık sütununun (`t1`) hangi sensöre baktığı ÖLÇÜLMEDİ — \
-             kesişimdeki duty bir okuma değil, bir tahmindir.",
+            "The solid vertical line is the CPU temperature; the dashed line marks \
+             the pointer. Which sensor the curve's `t1` column uses was not measured, \
+             so the intersection duty is only an estimate.",
         ));
 
         col = col.push(gorunum).push(canli);
@@ -611,40 +611,39 @@ impl App {
         {
             col = col.push(
                 widget::settings::section()
-                    .title(format!("Ham tablo — {}", m.label()))
+                    .title(format!("Raw table — {}", m.label()))
                     .add(widget::text::monotext(ham_tablo(m))),
             );
         }
 
         col.push(widget::text::caption(
-            "Bu firmware'de eğriler DEĞİŞTİRİLEMEZ; mod seçimi yalnız hangi \
-             eğrinin yükleneceğini belirler. (Veri portu salt okunur — ölçüldü.)",
+            "Curves cannot be edited on this firmware; selecting a mode only chooses \
+             which curve is loaded. (The data port is read-only; measured.)",
         ))
         .push(widget::text::caption(
-            "«EC'den doğrula» düğmesi YOK: EC'deki canlı eğriyi okumak `EIDR` \
-             mailbox'ını gerektiriyor, ama zaman aşımı bayrağını (`ECTE`) dışarı \
-             veren bir ACPI yolu yok — bayat veriyi geçerli cevaptan ayıramadığımız \
-             için okuma sunulmuyor (`kernel/README.md`). Buradaki tablolar firmware \
-             imajından ve ölçülen sekiz aktif tablonun sekizi de kaynakla birebir \
-             eşleşti.",
+            "There is no “Validate from EC” button: reading the live curve requires \
+             the `EIDR` mailbox, but ACPI exposes no timeout flag (`ECTE`). Stale data \
+             cannot be distinguished from a valid response, so this read is not offered \
+             (`kernel/README.md`). The tables come from the firmware image, and all \
+             eight measured active tables match their source.",
         ))
         .into()
     }
 
     fn guc_performans(&self) -> Element<'_, Message> {
         let s = &self.snap;
-        let mut sec = widget::settings::section().title("Performans profili");
+        let mut sec = widget::settings::section().title("Performance profile");
 
         sec = sec.add(self.satir(
-            "Etkin",
+            "Active",
             s.platform_profile.clone().unwrap_or_else(Self::yok),
         ));
         for p in &s.platform_profile_choices {
             let etkin = s.platform_profile.as_deref() == Some(p.as_str());
             let dugme = if etkin {
-                widget::button::suggested("Etkin")
+                widget::button::suggested("Active")
             } else {
-                widget::button::standard("Seç").on_press(Message::Profil(p.clone()))
+                widget::button::standard("Select").on_press(Message::Profil(p.clone()))
             };
             sec = sec.add(widget::settings::item::builder(p.clone()).control(dugme));
         }
@@ -653,17 +652,16 @@ impl App {
 
         if s.platform_profile.as_deref() == Some("custom") {
             col = col.push(widget::text::caption(
-                "«custom» = sürücü henüz bir profil yazmadı. EC aktif profili geri \
-                 vermiyor (WMBC'de 0xED okuması yok), o yüzden uydurulmuyor. \
-                 İlk profil değişiminde gerçek değere oturur.",
+                "“custom” means the driver has not written a profile yet. The EC does \
+                 not expose a read for 0xED, so the active value is not guessed; it \
+                 becomes known after the first profile change.",
             ));
         }
 
         col.push(widget::text::caption(
-            "Profil, CPU güç limitleri ile dGPU boost bütçesini tek pakette \
-             anahtarlıyor. Fan modu buna DAHİL DEĞİL — ayrı bir kol, çünkü \
-             güç yöneticisi profili fiş takıp çıkarınca yeniden yazıyor ve \
-             seçtiğin fan modunu geri alması istenmiyor.",
+            "The profile switches CPU power limits and the dGPU boost budget as one \
+             package. Fan mode is separate because the power manager rewrites the \
+             profile when AC state changes.",
         ))
         .into()
     }
@@ -674,31 +672,30 @@ impl App {
             .spacing(24)
             .push(
                 widget::settings::section()
-                    .title("Pil")
+                    .title("Battery")
                     .add(self.satir(
-                        "Doluluk",
+                        "Charge",
                         s.battery_pct.map_or_else(Self::yok, |v| format!("%{v}")),
                     ))
                     .add(
                         self.satir(
-                            "Şarj limiti",
+                            "Charge limit",
                             s.charge_limit_pct
                                 .map_or_else(Self::yok, |v| format!("%{v}")),
                         ),
                     )
                     .add(self.satir(
-                        "Güç kaynağı",
+                        "Power source",
                         match s.ac_online {
-                            Some(true) => "Fişte".into(),
-                            Some(false) => "Pilde".into(),
+                            Some(true) => "AC power".into(),
+                            Some(false) => "Battery".into(),
                             None => Self::yok(),
                         },
                     )),
             )
             .push(widget::text::caption(
-                "Şarj limiti standart çekirdek arayüzü üzerinden yazılıyor ve \
-                 sürücü her yazımı geri okuyup doğruluyor. Uyanışta yeniden \
-                 uygulanıyor.",
+                "The charge limit uses the standard kernel interface. Each write is \
+                 read back and verified, and the value is restored after resume.",
             ))
             .into()
     }
@@ -706,22 +703,22 @@ impl App {
     fn hakkinda(&self) -> Element<'_, Message> {
         widget::column::with_capacity(8)
             .spacing(16)
-            .push(widget::text::title3("AERO Kontrol"))
+            .push(widget::text::title3("AERO Control"))
             .push(widget::text::body(
-                "Gigabyte AERO X16 1VH (SKU EG61VH) için kontrol arayüzü.",
+                "Control interface for the Gigabyte AERO X16 1VH (SKU EG61VH).",
             ))
             .push(widget::text::caption(
-                "Yalnız ölçülmüş yetenekler gösterilir. Bu makinede fan hızı \
-                 ayarlanamıyor, soket sıcaklığı kanalı ölü, klavye aydınlatma \
-                 yazmacı etkisiz — hiçbiri arayüzde yok, çünkü çalışmayan bir \
-                 düğme koymak düğme koymamaktan kötüdür.",
+                "Only measured capabilities are exposed. Fan speed is not directly \
+                 adjustable, the socket-temperature channel is inactive, and the \
+                 keyboard-light register has no visible effect; none is presented \
+                 as a control.",
             ))
             .push(widget::text::caption(format!(
-                "Sürücü: {}",
+                "Driver: {}",
                 if self.snap.driver_present {
-                    "aero_eg61h yüklü"
+                    "aero_eg61h loaded"
                 } else {
-                    "YÜKLÜ DEĞİL"
+                    "NOT LOADED"
                 }
             )))
             .into()
@@ -746,38 +743,38 @@ impl Application for App {
     fn init(core: Core, _flags: Self::Flags) -> (Self, Task<Self::Message>) {
         let mut nav = segmented_button::SingleSelectModel::default();
         nav.insert()
-            .text("Ön Ayarlar")
+            .text("Presets")
             .icon(widget::icon::from_name("preferences-system-symbolic"))
             .data(Panel::OnAyarlar)
             .activate();
         nav.insert()
-            .text("Durum")
+            .text("Status")
             .icon(widget::icon::from_name("utilities-system-monitor-symbolic"))
-            .data(Panel::Durum);
+            .data(Panel::Status);
         nav.insert()
-            .text("Fan ve Termal")
+            .text("Fan and thermal")
             .icon(gomulu_simge(include_bytes!(
                 "../data/icons/fan-symbolic.svg"
             )))
             .data(Panel::FanTermal);
         nav.insert()
-            .text("Fan Eğrisi")
+            .text("Fan curves")
             .icon(gomulu_simge(include_bytes!(
                 "../data/icons/fan-curve-symbolic.svg"
             )))
             .data(Panel::FanEgrisi);
         nav.insert()
-            .text("Güç ve Performans")
+            .text("Power and performance")
             .icon(gomulu_simge(include_bytes!(
                 "../data/icons/power-symbolic.svg"
             )))
-            .data(Panel::GucPerformans);
+            .data(Panel::GucPerformance);
         nav.insert()
-            .text("Pil")
+            .text("Battery")
             .icon(widget::icon::from_name("battery-symbolic"))
-            .data(Panel::Pil);
+            .data(Panel::Battery);
         nav.insert()
-            .text("Hakkında")
+            .text("About")
             .icon(widget::icon::from_name("help-about-symbolic"))
             .data(Panel::Hakkinda);
 
@@ -788,7 +785,7 @@ impl Application for App {
             sarj_taslak: snap.charge_limit_pct.unwrap_or(60),
             snap,
             hata: None,
-            egri_secim: EgriSecim::Etkin,
+            egri_secim: EgriSecim::Active,
             egri_karsilastir: false,
             egri_fan: 0,
             egri_ham: false,
@@ -816,7 +813,7 @@ impl Application for App {
                 }
             }
 
-            Message::HataKapat => self.hata = None,
+            Message::HataDismiss => self.hata = None,
 
             // Eğri paneli: dördü de yalnız ÇİZİMİ değiştiriyor, donanıma
             // hiçbir yazma yapmıyor.
@@ -824,7 +821,7 @@ impl Application for App {
                 self.egri_secim = match i.checked_sub(1).and_then(|k| EGRI_MODLARI.get(k)) {
                     Some(m) => EgriSecim::Sabit(*m),
                     // 0 ya da beklenmedik indeks: etkin modu izlemeye dön.
-                    None => EgriSecim::Etkin,
+                    None => EgriSecim::Active,
                 };
             }
 
@@ -837,15 +834,15 @@ impl Application for App {
 
             Message::SarjKaydir(v) => self.sarj_taslak = v,
 
-            Message::SarjUygula => self.uygula(Action::ChargeLimit(self.sarj_taslak)),
+            Message::SarjApply => self.uygula(Action::ChargeLimit(self.sarj_taslak)),
 
             Message::FanModu(m) => self.uygula(Action::FanMode(m)),
 
             Message::Profil(p) => self.uygula(Action::Profile(p)),
 
-            Message::OnAyarUygula(i) => {
+            Message::OnAyarApply(i) => {
                 if let Some(o) = ON_AYARLAR.get(i) {
-                    // Fan modu ÖNCE: profil yazımı PPD üzerinden gidiyor ve
+                    // Fan mode ÖNCE: profil yazımı PPD üzerinden gidiyor ve
                     // AC/pil olaylarını tetikleyebiliyor; fanı önce oturtmak
                     // ara durumda yanlış eğride kalmayı kısaltıyor.
                     self.uygula(Action::FanMode(o.fan));
@@ -862,8 +859,8 @@ impl Application for App {
     /// canlı sayı göstermeyen panellerde EC'yi boşuna yormanın anlamı yok.
     fn subscription(&self) -> Subscription<Self::Message> {
         let period = match self.panel() {
-            // Eğri panelinde canlı imleç var — Durum/Fan ile aynı hızda.
-            Panel::Durum | Panel::FanTermal | Panel::FanEgrisi => Duration::from_secs(2),
+            // Eğri panelinde canlı imleç var — Status/Fan ile aynı hızda.
+            Panel::Status | Panel::FanTermal | Panel::FanEgrisi => Duration::from_secs(2),
             Panel::OnAyarlar => Duration::from_secs(3),
             _ => Duration::from_secs(5),
         };
@@ -873,11 +870,11 @@ impl Application for App {
     fn view(&self) -> Element<'_, Self::Message> {
         let icerik = match self.panel() {
             Panel::OnAyarlar => self.on_ayarlar(),
-            Panel::Durum => self.durum(),
+            Panel::Status => self.durum(),
             Panel::FanTermal => self.fan_termal(),
             Panel::FanEgrisi => self.fan_egrisi(),
-            Panel::GucPerformans => self.guc_performans(),
-            Panel::Pil => self.pil(),
+            Panel::GucPerformance => self.guc_performans(),
+            Panel::Battery => self.pil(),
             Panel::Hakkinda => self.hakkinda(),
         };
 
@@ -933,7 +930,7 @@ mod tests {
         for (i, satir) in veri.iter().enumerate() {
             assert_eq!(satir[0] as usize, i + 1, "satır numarası atladı:\n{t}");
         }
-        // İlk satır Dengeli'nin ölçülen ilk noktası: fan 0 54/70/18, fan 1 48/57/18.
+        // İlk satır Balanced'nin ölçülen ilk noktası: fan 0 54/70/18, fan 1 48/57/18.
         assert_eq!(veri[0], vec![1, 54, 70, 18, 48, 57, 18], "\n{t}");
         assert_eq!(veri[13], vec![14, 90, 100, 43, 93, 100, 43], "\n{t}");
 

@@ -1,6 +1,6 @@
 [package]
 name = "aero-sysfs"
-description = "aero_eg61h sürücüsünün sysfs yüzeyini okur — her düğüm opsiyonel"
+description = "Optional sysfs reader for the aero_eg61h driver"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

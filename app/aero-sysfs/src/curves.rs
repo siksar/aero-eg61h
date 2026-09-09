@@ -99,7 +99,7 @@ impl Egri {
     }
 
     /// EC'nin **iç** mod numarası. Sysfs adıyla aynı değil — "Dengeli"
-    /// iç mod `0x04`, "Duyarlı" iç mod `0x00`. `aorus_laptop`'ın
+    /// iç mod `0x04`, "Duyarlı" iç mod `0x00`. the legacy driver's
     /// yanlış bildirdiği ayrım tam burada.
     pub fn ic_mod(&self) -> u8 {
         self.kural[3]
@@ -407,7 +407,7 @@ mod tests {
         }
     }
 
-    /// İç mod numaraları sysfs adlarıyla AYNI DEĞİL — `aorus_laptop`'ın
+    /// İç mod numaraları sysfs adlarıyla AYNI DEĞİL — the legacy driver's
     /// yanlış bildirdiği ayrım burada sabitleniyor (`firmware-8051.md` §4.2).
     #[test]
     fn ic_mod_numaralari_belgeyle_ayni() {

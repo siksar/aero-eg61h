@@ -15,21 +15,17 @@
  *    FAN1/FAN2 baytları yazımı kabul ediyor, bayt tutuyor, RPM DEĞİŞMİYOR —
  *    hiçbir modda, üç bağımsız kanıtla. Salt okunur da olamaz: o baytlar gerçek
  *    duty'yi göstermiyor (gerçek duty EC XRAM 0xF8D6/0xF90C'de, host penceresinin
- *    kapalı kısmında). aorus_laptop'ın pwm1/pwm2 sunması bir hatadır.
+ *    kapalı kısmında). the legacy driver's pwm1/pwm2 sunması bir hatadır.
  *
  * 2. `temp2` (SKTC, WMBC 0xE2/0xE3) YOK — ÖLÇÜLDÜ, ÖLÜ KANAL. 7 Eyl 2026'da
- *    iki bağımsız koşu: boştayken 0 (aorus_laptop'ın temp2_input'u da aynı
- *    anda 0), ve TAM YÜK altında — CPU 91 °C, fanlar 3333/3703 rpm — hâlâ 0.
- *    Okuma doğru, alan boş. Bu kanal bir daha açılmayacak.
- *    aorus_laptop temp2 VE temp3 sunuyor, ikisi de sıfır: aynı hata sınıfı.
+ *    Two independent runs showed the channel remains zero at idle and under
+ *    full load, so it is intentionally not exposed through hwmon.
  *
  * 3. Dört fan YOK, iki fan var — donanımda iki fan ölçüldü, firmware'de iki
- *    kayıtlı fan dizisi var. aorus_laptop'ın fan3/fan4 iddiası doğrulanmadı.
+ *    kayıtlı fan dizisi var. the legacy driver's fan3/fan4 iddiası doğrulanmadı.
  *
  * ETİKETLER: firmware fanları "fan 0" / "fan 1" diye adlandırıyor ve hiçbir
- * yerde CPU/GPU ataması yok (ne DSDT'de ne disassembly'de). Bu yüzden etiketler
- * "Fan 1"/"Fan 2" — tasarım belgesindeki "CPU Fan"/"GPU Fan" ölçülmemiş bir
- * tahmindi. Hangi fanın neyi soğuttuğu ölçülürse etiket güncellenir.
+ *    No CPU/GPU assignment was measured, so the labels remain "Fan 1"/"Fan 2".
  *
  * YOKLAMA YOK: bu dosya kendiliğinden hiçbir şey okumaz. Her okuma, userspace
  * bir hwmon dosyasını okuduğunda olur (okuma başına bir ACPI/WMI çağrısı).

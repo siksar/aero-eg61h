@@ -12,15 +12,15 @@ use std::path::Path;
 
 fn kullanim() -> ! {
     eprintln!(
-        "kullanim:
-  aero-ctl [--root DIZIN]        durum dokumu (varsayilan)
+        "usage:
+  aero-ctl [--root PATH]         print a status snapshot (default)
   aero-ctl set fan <mod>         quiet | balanced | responsive | gaming | turbo
-  aero-ctl set charge <1-100>    sarj limiti yuzdesi
+  aero-ctl set charge <1-100>    charge limit percentage
   aero-ctl set profile <ad>      low-power | balanced | performance
 
-Yazma yolu YETKI ISTEMEZ: polkit'li systemd birimleri ve PPD uzerinden gider.
-Dogrulama ayricalikli tarafta (birim betigi); buradaki denetim yalniz hizli
-geri bildirim icin."
+Writes use the existing polkit-authorized systemd units and PPD.
+Validation happens in the privileged unit; this check only provides fast
+feedback."
     );
     std::process::exit(2);
 }
@@ -35,15 +35,15 @@ fn set(args: &[String]) -> ! {
         "fan" => match FanMode::from_sysfs(deger) {
             Some(m) => Action::FanMode(m),
             None => {
-                eprintln!("bilinmeyen fan modu: {deger}");
-                eprintln!("gecerli: quiet balanced responsive gaming turbo");
+                eprintln!("unknown fan mode: {deger}");
+                eprintln!("valid values: quiet balanced responsive gaming turbo");
                 std::process::exit(2);
             }
         },
         "charge" => match deger.parse::<u8>() {
             Ok(v) => Action::ChargeLimit(v),
             Err(_) => {
-                eprintln!("sayi degil: {deger}");
+                eprintln!("not a number: {deger}");
                 std::process::exit(2);
             }
         },
@@ -54,12 +54,12 @@ fn set(args: &[String]) -> ! {
     match apply(&action) {
         Ok(()) => {
             // Ne yazdigimizi degil, sistemin GERCEKTEN ne okudugunu bildir.
-            // (aorus_laptop'in hatasi tam olarak yazdigini bildirmekti.)
+            // (the legacy driver's hatasi tam olarak yazdigini bildirmekti.)
             let s = Snapshot::read();
             match ne {
-                "fan" => println!("fan modu: {}", s.fan_mode.map_or("—".into(), |m| m.as_sysfs().to_string())),
-                "charge" => println!("sarj limiti: %{}", s.charge_limit_pct.map_or("—".into(), |v| v.to_string())),
-                _ => println!("profil: {}", s.platform_profile.unwrap_or_else(|| "—".into())),
+                "fan" => println!("fan mode: {}", s.fan_mode.map_or("—".into(), |m| m.as_sysfs().to_string())),
+                "charge" => println!("charge limit: %{}", s.charge_limit_pct.map_or("—".into(), |v| v.to_string())),
+                _ => println!("profile: {}", s.platform_profile.unwrap_or_else(|| "—".into())),
             }
             std::process::exit(0)
         }
@@ -88,11 +88,11 @@ fn main() {
     };
 
 
-    println!("AERO X16 1VH (EG61VH) — durum");
+    println!("AERO X16 1VH (EG61VH) — status");
     println!();
 
     if !s.problems.is_empty() {
-        println!("  ⚠ EKSİKLER");
+        println!("  ⚠ MISSING CAPABILITIES");
         for p in &s.problems {
             println!("    {} — {}", p.what, p.why);
         }
@@ -101,10 +101,10 @@ fn main() {
 
     let na = "—".to_string();
 
-    println!("  Sürücü      : {}", if s.driver_present { "aero_eg61h yüklü" } else { "YÜKLÜ DEĞİL" });
-    println!("  Güç kaynağı : {}", match s.ac_online {
+    println!("  Driver      : {}", if s.driver_present { "aero_eg61h loaded" } else { "NOT LOADED" });
+    println!("  Power source: {}", match s.ac_online {
         Some(true) => "AC",
-        Some(false) => "Pil",
+        Some(false) => "Battery",
         None => "—",
     });
     println!();
@@ -115,26 +115,26 @@ fn main() {
     println!();
 
     match (s.fan_mode, &s.fan_mode_raw_unknown) {
-        (Some(m), _) => println!("  Fan modu    : {} ({}) — {}", m.label(), m.as_sysfs(), m.describe()),
-        (None, Some(raw)) => println!("  Fan modu    : TANINMIYOR (`{raw}`)"),
-        (None, None) => println!("  Fan modu    : {na}"),
+        (Some(m), _) => println!("  Fan mode    : {} ({}) — {}", m.label(), m.as_sysfs(), m.describe()),
+        (None, Some(raw)) => println!("  Fan mode    : UNKNOWN (`{raw}`)"),
+        (None, None) => println!("  Fan mode    : {na}"),
     }
     if !s.fan_mode_choices.is_empty() {
         let list: Vec<_> = s.fan_mode_choices.iter().map(|m| m.as_sysfs()).collect();
-        println!("    seçenekler: {}", list.join(" "));
+        println!("    options: {}", list.join(" "));
     }
     println!();
 
-    println!("  Profil      : {}", s.platform_profile.clone().unwrap_or_else(|| na.clone()));
+    println!("  Profile     : {}", s.platform_profile.clone().unwrap_or_else(|| na.clone()));
     if !s.platform_profile_choices.is_empty() {
-        println!("    seçenekler: {}", s.platform_profile_choices.join(" "));
+        println!("    options: {}", s.platform_profile_choices.join(" "));
     }
     if s.platform_profile.as_deref() == Some("custom") {
-        println!("    (custom = sürücü henüz profil yazmadı; WMBC'de 0xED okuması yok,");
-        println!("     yani EC'nin durumu bilinmiyor ve uydurulmuyor)");
+        println!("    (custom = the driver has not written a profile; WMBC has no 0xED read,");
+        println!("     so the EC state is unknown and is not guessed)");
     }
     println!();
 
-    println!("  Pil         : {}", s.battery_pct.map(|v| format!("%{v}")).unwrap_or_else(|| na.clone()));
-    println!("  Şarj limiti : {}", s.charge_limit_pct.map(|v| format!("%{v}")).unwrap_or_else(|| na.clone()));
+    println!("  Battery     : {}", s.battery_pct.map(|v| format!("%{v}")).unwrap_or_else(|| na.clone()));
+    println!("  Charge limit: {}", s.charge_limit_pct.map(|v| format!("%{v}")).unwrap_or_else(|| na.clone()));
 }

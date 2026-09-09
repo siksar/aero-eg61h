@@ -1,6 +1,6 @@
 [package]
 name = "aero-control"
-description = "AERO Kontrol — Gigabyte AERO X16 1VH için COSMIC yerlisi kontrol arayüzü"
+description = "English-first COSMIC control interface for the Gigabyte AERO X16 1VH"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
