@@ -81,6 +81,35 @@ impl fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
+/// Kernel `platform_profile` ABI adını PPD'nin adına çevirir.
+///
+/// ÖLÇÜLDÜ 12 Eyl 2026 — bu fonksiyon olmadan profil yazma yolu YARIM ÇALIŞIYORDU.
+/// Okuma tarafı sürücünün `platform-profile/*/choices` düğümünü okuyor ve orası
+/// kernel ABI adlarını veriyor:
+///
+/// ```text
+/// $ cat /sys/class/platform-profile/platform-profile-0/choices
+/// low-power balanced performance
+/// $ powerprofilesctl set low-power
+/// error: argument profile: invalid choice: 'low-power'
+///        (choose from 'power-saver', 'balanced', 'performance')
+/// ```
+///
+/// Yani "Quiet" ön ayarı ve Güç panelindeki `low-power` düğmesi sessizce
+/// reddediliyordu: fan modu yazılıyor, profil yazılmıyor, makine karma bir
+/// durumda kalıyordu (hiçbir ön ayar "Active" görünmüyor).
+///
+/// ÇEVİRİ, KÖPRÜ DEĞİŞİKLİĞİ DEĞİL — bilerek. PPD tek profil otoritesi olarak
+/// kalmalı: `~/nixos-zixar`'ın power-display.service'i ve sched.nix'i de profili
+/// PPD üzerinden sürüyor. Handler düğümüne doğrudan yazmak PPD'nin iç durumunu
+/// bozar ve bir sonraki AC/pil olayında geri alınır.
+fn ppd_adi(kernel_adi: &str) -> &str {
+    match kernel_adi.trim() {
+        "low-power" => "power-saver",
+        other => other,
+    }
+}
+
 fn calistir(prog: &str, args: &[&str]) -> Result<(), Error> {
     let komut = format!("{prog} {}", args.join(" "));
 
@@ -129,7 +158,7 @@ pub fn apply(action: &Action) -> Result<(), Error> {
             if p.trim().is_empty() {
                 return Err(Error::Gecersiz("profile name is empty".into()));
             }
-            calistir(POWERPROFILESCTL, &["set", p])
+            calistir(POWERPROFILESCTL, &["set", ppd_adi(p)])
         }
     }
 }
@@ -151,6 +180,18 @@ mod tests {
     fn bos_profil_reddediliyor() {
         let e = apply(&Action::Profile("  ".into())).unwrap_err();
         assert!(matches!(e, Error::Gecersiz(_)));
+    }
+
+    /// Kernel ABI adı ile PPD'nin adı yalnız bir noktada ayrışıyor; ayrıştığı
+    /// yer de çevrilmezse "Quiet" ön ayarı yarım uygulanıyor (12 Eyl 2026).
+    #[test]
+    fn kernel_profil_adi_ppd_adina_cevriliyor() {
+        assert_eq!(ppd_adi("low-power"), "power-saver");
+        assert_eq!(ppd_adi("balanced"), "balanced");
+        assert_eq!(ppd_adi("performance"), "performance");
+        // Bilinmeyen ad AYNEN geçer: uydurma yapmaktansa PPD'nin kendi hata
+        // mesajını kullanıcıya göstermek doğru.
+        assert_eq!(ppd_adi("balanced-performance"), "balanced-performance");
     }
 
     #[test]
