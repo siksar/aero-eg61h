@@ -22,6 +22,7 @@
 //! arkada kalmıyor — 4.28 W boşta bütçesi kuralı.
 
 mod egri;
+mod klavye;
 
 use aero_sysfs::{Action, FanMode, Snapshot, apply, curves};
 use cosmic::app::{Core, Settings, Task};
@@ -41,6 +42,7 @@ enum Panel {
     FanEgrisi,
     GucPerformance,
     Battery,
+    KlavyeIsik,
     Hakkinda,
 }
 
@@ -136,6 +138,24 @@ enum Message {
     EgriFan(usize),
     /// Raw table and source kanıtı bölümü.
     EgriHam(bool),
+
+    // --- Klavye aydınlatması --------------------------------------------
+    /// Parlaklık kaydırıcısı sürükleniyor (henüz yazma yok).
+    KbdParlaklikKaydir(u32),
+    /// Kaydırıcı bırakıldı — şimdi yaz.
+    KbdParlaklikApply,
+    /// Hazır renk düğmesi ya da doğrulanmış hex girişi.
+    KbdRenk(String),
+    /// Hex metin kutusu düzenleniyor (henüz yazma yok).
+    KbdHexDuzenle(String),
+    /// Hex kutusunda Enter — doğrula ve yaz.
+    KbdHexApply,
+    /// Aç/kapa.
+    KbdToggle,
+    /// `Some(mod)` başlat/değiştir, `None` durdur.
+    KbdAnimasyon(Option<String>),
+    /// Stylix rengine dön (tema servisini yeniden koştur).
+    KbdStylix,
 }
 
 struct App {
@@ -144,6 +164,11 @@ struct App {
     snap: Snapshot,
     /// Kaydırıcı sürüklenirken geçici değer; bırakılınca yazılıyor.
     sarj_taslak: u8,
+    /// Kaydırıcı ŞU AN sürükleniyor mu. `Tik` bunu görüp taslağı ezmiyor —
+    /// 12 Eyl 2026: eski kodun yorumu 'sürüklenmiyorken izle' diyordu ama koşul
+    /// hiç yazılmamıştı, yani 2 sn'de bir gelen okuma kullanıcının parmağının
+    /// altındaki değeri sistemin eski değerine geri zıplatıyordu.
+    sarj_surukleniyor: bool,
     /// Son yazma hatası — kullanıcıya aynen gösteriliyor, yutulmuyor.
     hata: Option<String>,
 
@@ -153,6 +178,17 @@ struct App {
     egri_karsilastir: bool,
     egri_fan: u8,
     egri_ham: bool,
+
+    /// Klavye ışığının okunmuş durumu. `Snapshot` ile BİRLİKTE tazeleniyor
+    /// ama ondan ayrı: kaynağı sysfs değil, `kbd-rgb status --json`.
+    kbd: klavye::Durum,
+    /// Kaydırıcı sürüklenirken geçici parlaklık; şarj kaydırıcısıyla aynı
+    /// desen — `Tik` sürükleme sırasında taslağı ezmiyor.
+    kbd_parlaklik_taslak: u32,
+    kbd_surukleniyor: bool,
+    /// Hex metin kutusunun içeriği. Yazma yalnız Enter'da; her tuş vuruşunda
+    /// donanıma gitmek hem gereksiz hem yarım hex'lerde hata üretirdi.
+    kbd_hex: String,
 }
 
 /// Gömülü nav simgesi.
@@ -275,6 +311,19 @@ impl App {
     /// Yazdığımızı değil sistemin okuduğunu göstermek bu uygulamanın
     /// varlık sebebi — the legacy driver's behavior tam olarak yazdığını
     /// bildirmekti.
+    /// Klavye eylemini gönderir ve durumu HEMEN geri okur — `uygula()` ile
+    /// aynı sözleşme: ekranda yazdığımız değil, sistemin döndürdüğü duruyor.
+    fn kbd_uygula(&mut self, e: &klavye::Eylem) {
+        match klavye::uygula(e) {
+            Ok(()) => self.hata = None,
+            Err(m) => self.hata = Some(m),
+        }
+        self.kbd = klavye::Durum::oku();
+        if !self.kbd_surukleniyor {
+            self.kbd_parlaklik_taslak = self.kbd.parlaklik;
+        }
+    }
+
     fn uygula(&mut self, a: Action) {
         match apply(&a) {
             Ok(()) => self.hata = None,
@@ -314,10 +363,46 @@ impl App {
                      Use the other panels for individual controls.",
             ));
 
+        let eslesen = ON_AYARLAR.iter().position(|o| {
+            s.fan_mode == Some(o.fan) && s.platform_profile.as_deref() == Some(o.profil)
+        });
+
+        // KARMA DURUMUN EKRANDA ADI OLMALI (12 Eyl 2026).
+        //
+        // Bu liste yalnız TAM eşleşmeyi biliyordu: fan modu ile profil aynı ön
+        // ayara ait değilse hiçbir satır "Active" olmuyor ve arayüz "hiçbir şey
+        // seçili değil" gibi okunuyordu. Oysa makinenin bir durumu var — sadece
+        // adı yoktu. Karma duruma en az üç yoldan giriliyor:
+        //   1. Oyun oturumu fanı `turbo`ya alır ama profili `balanced` bırakır
+        //      (~/nixos-zixar/system/kernel/sched.nix). Oyun kapandıktan sonra
+        //      geri dönüş kolu kırıksa bu hâl KALICI olur — kullanıcının 12 Eyl'de
+        //      bildirdiği arıza tam olarak buydu.
+        //   2. Fan panelinden tek bir mod seçmek (ön ayar paketi değil).
+        //   3. Sürücü henüz profil yazmadıysa profil `custom` okunur; hiçbir ön
+        //      ayarın `profil` alanı `custom` değil.
+        // Çözüm gizlemek değil söylemek: ne olduğunu aynen yaz.
+        if eslesen.is_none() {
+            let fan = s.fan_mode.map_or_else(
+                || {
+                    s.fan_mode_raw_unknown
+                        .clone()
+                        .map_or_else(|| "—".to_string(), |r| format!("unknown ({r})"))
+                },
+                |m| m.label().to_string(),
+            );
+            let profil = s.platform_profile.clone().unwrap_or_else(|| "—".into());
+            sec = sec.add(
+                widget::settings::item::builder("Custom")
+                    .description(format!(
+                        "No preset matches the current state — fan: {fan}, profile: {profil}. \
+                         Apply one below to bring both back in step."
+                    ))
+                    .control(widget::text::caption("active")),
+            );
+        }
+
         for (i, o) in ON_AYARLAR.iter().enumerate() {
-            let etkin =
-                s.fan_mode == Some(o.fan) && s.platform_profile.as_deref() == Some(o.profil);
-            let dugme = if etkin {
+            let dugme = if eslesen == Some(i) {
                 widget::button::suggested("Active")
             } else {
                 widget::button::standard("Apply").on_press(Message::OnAyarApply(i))
@@ -331,7 +416,11 @@ impl App {
 
         let sarj = widget::settings::section().title("Charge limit").add(
             widget::settings::item::builder(format!("%{}", self.sarj_taslak))
-                .description("60 is recommended for battery longevity; use 100 before a long trip.")
+                .description(
+                    "80 is the configured default for battery longevity; use 100 before a long trip. \
+                     A value set here is temporary — the declarative one in \
+                     ~/nixos-zixar/system/arch/aerox16/wmi.nix wins on the next boot or switch.",
+                )
                 .control(
                     widget::slider(1..=100u8, self.sarj_taslak, Message::SarjKaydir)
                         .on_release(Message::SarjApply)
@@ -666,6 +755,160 @@ impl App {
         .into()
     }
 
+    /// Klavye aydınlatması paneli.
+    ///
+    /// Donanıma buradan DOĞRUDAN yazılmıyor: her kontrol `kbd-rgb`'yi
+    /// çağırıyor (bkz. `klavye.rs` başlığı). Cihaz yoksa kontroller hiç
+    /// çizilmiyor, yerine tek bir açıklama duruyor — düğmeye basıp hata almak
+    /// yerine neden çalışmadığını okumak daha iyi.
+    fn klavye_isik(&self) -> Element<'_, Message> {
+        let k = &self.kbd;
+
+        if !k.var() {
+            return widget::column::with_capacity(2)
+                .spacing(24)
+                .push(
+                    widget::settings::section()
+                        .title("Keyboard light")
+                        .add(self.satir("Device", Self::yok())),
+                )
+                .push(widget::text::caption(
+                    "No LampArray device found. The internal keyboard exposes it as a HID \
+                     interface; if it is missing, the kbd-rgb tool or its udev rule is not \
+                     installed. Try `kbd-rgb info` in a terminal.",
+                ))
+                .into();
+        }
+
+        let durum = widget::settings::section()
+            .title("Keyboard light")
+            .add(self.satir("Colour", format!("#{}", k.renk)))
+            .add(self.satir("Brightness", format!("%{}", k.parlaklik)))
+            .add(self.satir(
+                "State",
+                if k.acik { "On".into() } else { "Off".into() },
+            ))
+            .add(self.satir(
+                "Animation",
+                k.animasyon.clone().unwrap_or_else(|| "None".into()),
+            ))
+            .add(
+                widget::settings::item::builder("Power")
+                    .description(
+                        "Turning the light off keeps the colour and brightness, so turning it \
+                         back on restores exactly what was there.",
+                    )
+                    .control(
+                        widget::button::standard(if k.acik { "Turn off" } else { "Turn on" })
+                            .on_press(Message::KbdToggle),
+                    ),
+            );
+
+        let parlaklik = widget::settings::section().title("Brightness").add(
+            widget::settings::item::builder(format!("%{}", self.kbd_parlaklik_taslak))
+                .description(
+                    "The hardware has no separate brightness channel, so this scales the RGB \
+                     values. Raising it from zero also switches the light back on.",
+                )
+                .control(
+                    widget::slider(
+                        0..=100u32,
+                        self.kbd_parlaklik_taslak,
+                        Message::KbdParlaklikKaydir,
+                    )
+                    .on_release(Message::KbdParlaklikApply)
+                    .width(Length::Fixed(240.0)),
+                ),
+        );
+
+        // Hazır renkler iki satıra bölünüyor: dokuz düğme tek satırda dar
+        // pencerede taşıyor.
+        let mut ust = widget::row::with_capacity(5).spacing(8);
+        let mut alt = widget::row::with_capacity(4).spacing(8);
+        for (i, (ad, hex)) in klavye::ON_AYAR_RENKLER.iter().enumerate() {
+            let dugme = if k.renk == *hex {
+                widget::button::suggested(*ad)
+            } else {
+                widget::button::standard(*ad).on_press(Message::KbdRenk((*hex).to_string()))
+            };
+            if i < 5 {
+                ust = ust.push(dugme);
+            } else {
+                alt = alt.push(dugme);
+            }
+        }
+
+        let renk = widget::settings::section()
+            .title("Colour")
+            .add(widget::settings::item::builder("Presets").control(
+                widget::column::with_capacity(2).spacing(8).push(ust).push(alt),
+            ))
+            .add(
+                widget::settings::item::builder("Custom")
+                    .description("Six hex digits, with or without '#'. Press Enter to apply.")
+                    .control(
+                        widget::text_input("8ba4b0", &self.kbd_hex)
+                            .on_input(Message::KbdHexDuzenle)
+                            .on_submit(|_| Message::KbdHexApply)
+                            .width(Length::Fixed(140.0)),
+                    ),
+            )
+            .add(
+                widget::settings::item::builder("Theme colour")
+                    .description(
+                        "Restores the Stylix accent that the login service writes. The colour \
+                         itself lives in lib/theme.nix — changing it there and rebuilding is \
+                         what makes it stick.",
+                    )
+                    .control(
+                        widget::button::standard("Back to theme").on_press(Message::KbdStylix),
+                    ),
+            );
+
+        let mut anim_satir = widget::row::with_capacity(3).spacing(8);
+        let kapali = k.animasyon.is_none();
+        anim_satir = anim_satir.push(if kapali {
+            widget::button::suggested("None")
+        } else {
+            widget::button::standard("None").on_press(Message::KbdAnimasyon(None))
+        });
+        for (ad, m) in klavye::ANIMASYONLAR {
+            let etkin = k.animasyon.as_deref() == Some(*m);
+            anim_satir = anim_satir.push(if etkin {
+                widget::button::suggested(*ad)
+            } else {
+                widget::button::standard(*ad)
+                    .on_press(Message::KbdAnimasyon(Some((*m).to_string())))
+            });
+        }
+
+        let animasyon = widget::settings::section()
+            .title("Animation")
+            .add(
+                widget::settings::item::builder("Effect")
+                    .description(
+                        "Animations run as a user service and are never started at login — \
+                         nothing spins while idle. Stopping one hands the effects back to the \
+                         firmware.",
+                    )
+                    .control(anim_satir),
+            );
+
+        widget::column::with_capacity(6)
+            .spacing(24)
+            .push(durum)
+            .push(parlaklik)
+            .push(renk)
+            .push(animasyon)
+            .push(widget::text::caption(
+                "This panel drives the kbd-rgb tool, which talks to the keyboard over HID \
+                 LampArray — a single zone in 8-bit colour. The keyboard also speaks a vendor \
+                 protocol with per-key control and 13 hardware modes; that path is not wired \
+                 up here yet.",
+            ))
+            .into()
+    }
+
     fn pil(&self) -> Element<'_, Message> {
         let s = &self.snap;
         widget::column::with_capacity(8)
@@ -774,21 +1017,31 @@ impl Application for App {
             .icon(widget::icon::from_name("battery-symbolic"))
             .data(Panel::Battery);
         nav.insert()
+            .text("Keyboard light")
+            .icon(widget::icon::from_name("input-keyboard-symbolic"))
+            .data(Panel::KlavyeIsik);
+        nav.insert()
             .text("About")
             .icon(widget::icon::from_name("help-about-symbolic"))
             .data(Panel::Hakkinda);
 
         let snap = Snapshot::read();
+        let kbd = klavye::Durum::oku();
         let app = App {
             core,
             nav,
-            sarj_taslak: snap.charge_limit_pct.unwrap_or(60),
+            sarj_taslak: snap.charge_limit_pct.unwrap_or(80),
+            sarj_surukleniyor: false,
             snap,
             hata: None,
             egri_secim: EgriSecim::Active,
             egri_karsilastir: false,
             egri_fan: 0,
             egri_ham: false,
+            kbd_parlaklik_taslak: kbd.parlaklik,
+            kbd_surukleniyor: false,
+            kbd_hex: kbd.renk.clone(),
+            kbd,
         };
 
         (app, Task::none())
@@ -808,8 +1061,19 @@ impl Application for App {
             Message::Tik => {
                 self.snap = Snapshot::read();
                 // Kaydırıcı sürüklenmiyorken sistemin gerçek değerini izle.
-                if let Some(v) = self.snap.charge_limit_pct {
-                    self.sarj_taslak = v;
+                if !self.sarj_surukleniyor {
+                    if let Some(v) = self.snap.charge_limit_pct {
+                        self.sarj_taslak = v;
+                    }
+                }
+                // Klavye durumu YALNIZ o panel görünürken tazeleniyor: okuma
+                // sysfs değil, iki alt süreç (kbd-rgb + systemctl). Arka planda
+                // her tikte süreç açmanın karşılığı yok.
+                if self.panel() == Panel::KlavyeIsik {
+                    self.kbd = klavye::Durum::oku();
+                    if !self.kbd_surukleniyor {
+                        self.kbd_parlaklik_taslak = self.kbd.parlaklik;
+                    }
                 }
             }
 
@@ -832,13 +1096,58 @@ impl Application for App {
 
             Message::EgriHam(v) => self.egri_ham = v,
 
-            Message::SarjKaydir(v) => self.sarj_taslak = v,
+            Message::SarjKaydir(v) => {
+                self.sarj_surukleniyor = true;
+                self.sarj_taslak = v;
+            }
 
-            Message::SarjApply => self.uygula(Action::ChargeLimit(self.sarj_taslak)),
+            Message::SarjApply => {
+                self.sarj_surukleniyor = false;
+                self.uygula(Action::ChargeLimit(self.sarj_taslak));
+            }
 
             Message::FanModu(m) => self.uygula(Action::FanMode(m)),
 
             Message::Profil(p) => self.uygula(Action::Profile(p)),
+
+            // --- Klavye aydınlatması ------------------------------------
+            Message::KbdParlaklikKaydir(v) => {
+                self.kbd_surukleniyor = true;
+                self.kbd_parlaklik_taslak = v;
+            }
+
+            Message::KbdParlaklikApply => {
+                self.kbd_surukleniyor = false;
+                self.kbd_uygula(&klavye::Eylem::Parlaklik(self.kbd_parlaklik_taslak));
+            }
+
+            Message::KbdRenk(hex) => {
+                self.kbd_hex = hex.clone();
+                self.kbd_uygula(&klavye::Eylem::Renk(hex));
+            }
+
+            Message::KbdHexDuzenle(s) => self.kbd_hex = s,
+
+            // Doğrulama YAZMADAN önce: geçersiz giriş alt sürece hiç gitmiyor,
+            // kullanıcı da neyin yanlış olduğunu hata şeridinde görüyor.
+            Message::KbdHexApply => match klavye::hex_temizle(&self.kbd_hex) {
+                Some(h) => {
+                    self.kbd_hex = h.clone();
+                    self.kbd_uygula(&klavye::Eylem::Renk(h));
+                }
+                None => {
+                    self.hata = Some(format!(
+                        "'{}' altı haneli bir hex renk değil (örnek: 8ba4b0)",
+                        self.kbd_hex
+                    ));
+                }
+            },
+
+            Message::KbdToggle => self.kbd_uygula(&klavye::Eylem::Toggle),
+
+            Message::KbdAnimasyon(m) => self.kbd_uygula(&klavye::Eylem::Animasyon(m)),
+
+            Message::KbdStylix => self.kbd_uygula(&klavye::Eylem::StylixDon),
 
             Message::OnAyarApply(i) => {
                 if let Some(o) = ON_AYARLAR.get(i) {
@@ -875,6 +1184,7 @@ impl Application for App {
             Panel::FanEgrisi => self.fan_egrisi(),
             Panel::GucPerformance => self.guc_performans(),
             Panel::Battery => self.pil(),
+            Panel::KlavyeIsik => self.klavye_isik(),
             Panel::Hakkinda => self.hakkinda(),
         };
 
