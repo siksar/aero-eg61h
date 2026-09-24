@@ -11,7 +11,9 @@
 #   hardware.aero-eg61h.enable = true;
 #
 # Enable this module instead of any other driver or service that writes the same
-# EC WMI methods. Keep the measured `acpi_call` Dynamic Boost control separate.
+# EC WMI methods. Every EC write goes through the kernel driver; `acpi_call` is
+# no longer loaded (it bypassed the driver's lock and DMI gate and allowed root
+# to call arbitrary ACPI methods).
 { config, lib, pkgs, ... }:
 
 let
@@ -69,6 +71,7 @@ let
   # Fan modu düğümünün yolu GUID içeriyor. Sondaki örnek indeksi (-2) _WDG
   # sırasından geliyor ve kararlı görünüyor, ama glob daha dayanıklı.
   fanModeNode = ''"$(echo /sys/bus/wmi/devices/ABBC0F75-*/fan_mode)"'';
+  gpuBoostNode = ''"$(echo /sys/bus/wmi/devices/ABBC0F75-*/dgpu_boost)"'';
   chargeNode = "/sys/class/power_supply/BAT1/charge_control_end_threshold";
 
   fanModes = [ "quiet" "balanced" "responsive" "gaming" "turbo" ];
@@ -136,8 +139,8 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    boot.extraModulePackages = [ aero-eg61h config.boot.kernelPackages.acpi_call ];
-    boot.kernelModules = [ "aero-eg61h" "acpi_call" ];
+    boot.extraModulePackages = [ aero-eg61h ];
+    boot.kernelModules = [ "aero-eg61h" ];
 
     # Prevent a second EC writer from claiming the same WMI methods.
     boot.blacklistedKernelModules = [ "aorus-laptop" ];
@@ -174,11 +177,12 @@ in
             echo "$FAN" > "$F" || echo "aero: could not write fan mode" >&2
           fi
 
-          # dGPU Dynamic Boost bütçesi hâlâ ham WMI: sürücü dGPU kollarını
-          # SUNMUYOR (NPCF yazımı nvidia.ko ile yarışabilir, surucu-tasarim §3.8).
-          if [ -w /proc/acpi/call ]; then
-            echo "\\_SB.PCI0.AMW0.WMBD 0 0x4C $ACBT" > /proc/acpi/call
-            cat /proc/acpi/call > /dev/null
+          # dGPU Dynamic Boost bütçesi (WMBD 0x4C) artık sürücünün
+          # `dgpu_boost` düğümünden, io_lock altında yazılıyor. EC tarafında
+          # geri okuma yok; hata yalnız ACPI değerlendirmesinin kendisinden.
+          B=${gpuBoostNode}
+          if [ -w "$B" ]; then
+            echo "$ACBT" > "$B" || echo "aero: could not write dGPU boost" >&2
           fi
         '';
       };
@@ -194,15 +198,8 @@ in
       serviceConfig = {
         Type = "oneshot";
         ExecStart = pkgs.writeShellScript "aero-charge-limit" ''
-          # BCPS (charge_mode) sürücüde SUNULMUYOR: anlamı DSDT'den
-          # doğrulanamıyor ve standart bir karşılığı yok. Ama şarj limitinin
-          # etkili olması buna bağlı görünüyor, o yüzden ham WMI ile yazılıyor.
-          # Değer 4 TAHMİN DEĞİL, ÖLÇÜM: the legacy driver's charge_mode = 1'i
-          # EC'de BCPS = 4 üretiyordu (WMBC 0x64 = 0x04, 7 Eyl 2026).
-          if [ -w /proc/acpi/call ]; then
-            echo '\_SB.PCI0.AMW0.WMBD 0 0x64 4' > /proc/acpi/call
-            cat /proc/acpi/call > /dev/null
-          fi
+          # BCPS (WMBD 0x64 = 4) artık sürücü tarafından, limit yazılırken
+          # aynı kilit altında kurulup geri okunuyor (aero-battery.c).
 
           # Standart ABI. Sürücü yazımı geri okuyup doğruluyor, uyuşmazlıkta
           # -EIO dönüyor — yani buradaki hata gerçek bir hata.
@@ -309,14 +306,17 @@ in
       '';
     };
 
-    # Yazma köprüsünün polkit tarafı. `active` oturum için ŞİFRESİZ — PLAN §7'nin
-    # "fan modu / profil / şarj limiti = active yes" satırı. `auth_admin` isteyen
+    # Yazma köprüsünün polkit tarafı. Yalnız YEREL ve AKTİF oturum için
+    # ŞİFRESİZ — PLAN §7'nin "fan modu / profil / şarj limiti = active yes"
+    # satırı. SSH gibi uzak ya da arka plandaki oturumlar kuraldan düşer ve
+    # systemd'nin varsayılanına (yönetici kimlik doğrulaması) kalır. `auth_admin` isteyen
     # DIKKAT sınıfı kontroller henüz sunulmuyor; geldiklerinde AYRI birimler ve
     # AYRI bir kural olacak, bu kurala eklenmeyecek.
     security.polkit.extraConfig = ''
       polkit.addRule(function(action, subject) {
         if (action.id != "org.freedesktop.systemd1.manage-units") return polkit.Result.NOT_HANDLED;
         if (subject.user != "${cfg.user}") return polkit.Result.NOT_HANDLED;
+        if (!subject.local || !subject.active) return polkit.Result.NOT_HANDLED;
         var unit = action.lookup("unit");
         if (unit == "aero-fan-cycle.service") return polkit.Result.YES;
         if (unit && unit.indexOf("aero-set-fan@") === 0) return polkit.Result.YES;

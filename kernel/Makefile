@@ -7,7 +7,7 @@
 
 obj-m += aero-eg61h.o
 
-aero-eg61h-y := aero-main.o aero-hwmon.o aero-battery.o aero-fan.o aero-profile.o
+aero-eg61h-y := aero-main.o aero-hwmon.o aero-battery.o aero-fan.o aero-profile.o aero-gpu.o
 
 KDIR ?= /lib/modules/$(shell uname -r)/build
 PWD  := $(CURDIR)

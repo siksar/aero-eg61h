@@ -53,6 +53,7 @@
 #define AERO_RD_FAN_FANB	0x71	/* PECM+0x2C bit1  gaming        */
 #define AERO_RD_FAN_TENF	0x67	/* PECM+0x2C bit2                */
 #define AERO_RD_FAN_ADJF	0x6A	/* PECM+0x2C bit3                */
+#define AERO_RD_CHARGE_MODE	0x64	/* BCPS  bit2 = özel şarj limiti */
 
 /*
  * ---------------------------------------------------------------------------
@@ -67,6 +68,19 @@
 #define AERO_WR_FAN_ADJF	0x6A	/* ADJF=val                               */
 #define AERO_WR_CHARGE_LIMIT	0x65	/* BCPC=val (%) — UYANIŞTA EC GERİ ALIYOR */
 #define AERO_WR_PERF_PROFILE	0xED	/* 0-3: CPU PL1/2/3 + dGPU bütçesi paketi */
+#define AERO_WR_CHARGE_MODE	0x64	/* BCPS=val — limitin etkili olması için 4 */
+#define AERO_WR_DGPU_BOOST	0x4C	/* NPCF.ACBT = val × 8 W, 0-10; geri okuma YOK */
+
+/*
+ * BCPS (0x64) için ölçülmüş tek değer 4: the legacy driver's charge_mode = 1
+ * EC'de BCPS = 4 üretiyordu (WMBC 0x64 = 0x04, 7 Eyl 2026). Anlamı DSDT'den
+ * doğrulanamadığı için sysfs'e AYRI bir düğüm olarak açılmıyor; yalnız şarj
+ * limiti yazılırken, aynı kilit altında kurulup geri okunuyor.
+ */
+#define AERO_CHARGE_MODE_CUSTOM	0x04
+
+/* dGPU Dynamic Boost bütçesi aralığı (NixOS modülünün eski acpi_call yolu). */
+#define AERO_DGPU_BOOST_MAX	10
 
 /*
  * ÖLÜ KANAL — ölçüldü, sunulmayacak
@@ -176,6 +190,9 @@ void aero_battery_resume(void);
 int __aero_fan_read_pattern(u8 *pattern);	/* çağıran io_lock'u tutmalı */
 const char *aero_fan_mode_name(u8 pattern);
 extern const struct attribute_group *aero_wmbd_groups[];
+
+/* dGPU boost bütçesi (aero-gpu.c) — WMBD cihazının altında `dgpu_boost` */
+extern const struct attribute_group aero_gpu_group;
 
 /* platform_profile (aero-profile.c) — YALNIZ 0xED taşır (K1 = a′) */
 int aero_profile_init(struct device *parent);

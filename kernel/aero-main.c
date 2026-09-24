@@ -29,10 +29,20 @@
 
 #include "aero-eg61h.h"
 
+/*
+ * İki kapı, iki ayrı parametre. Önceden tek `force` ikisini birden
+ * kapatıyordu: DMI'yi aşmak isteyen biri farkında olmadan çakışma kapısını
+ * da açıyordu. `force` adı geriye uyumluluk için DMI kapısında kaldı.
+ */
 static bool force;
 module_param(force, bool, 0444);
 MODULE_PARM_DESC(force,
-	"bind even when DMI does not match or a conflicting vendor driver is loaded (default: no)");
+	"bind even when DMI does not match EG61VH (default: no)");
+
+static bool ignore_conflict;
+module_param(ignore_conflict, bool, 0444);
+MODULE_PARM_DESC(ignore_conflict,
+	"bind even when a conflicting vendor driver is loaded; WMI writes may race (default: no)");
 
 static struct aero_ec aero = {
 	.io_lock = __MUTEX_INITIALIZER(aero.io_lock),
@@ -324,7 +334,7 @@ static int aero_check_platform(struct wmi_device *wdev)
 	}
 
 	if (aero_conflicting_driver_present()) {
-		if (!force) {
+		if (!ignore_conflict) {
 			dev_err(&wdev->dev,
 				"another vendor driver is loaded — concurrent WMI calls could race.\n");
 			dev_err(&wdev->dev,
@@ -332,7 +342,7 @@ static int aero_check_platform(struct wmi_device *wdev)
 			return -EBUSY;
 		}
 		dev_warn(&wdev->dev,
-			 "force=1: a conflicting driver is loaded; fan-mode writes may race\n");
+			 "ignore_conflict=1: a conflicting driver is loaded; WMI writes may race\n");
 	}
 
 	return 0;

@@ -7,8 +7,11 @@
  *
  * Özel bir `charge_limit` düğümü SUNULMUYOR — the legacy driver's node; the standard
  * karşılığı varken özel düğüm açmak, aracın onu tanımaması demek.
- * `charge_mode` (WMBD 0x64, BCPS) da yok: anlamı DSDT'den doğrulanamıyor ve
- * standart bir karşılığı yok.
+ * `charge_mode` (WMBD 0x64, BCPS) da ayrı bir düğüm olarak yok: anlamı
+ * DSDT'den doğrulanamıyor ve standart bir karşılığı yok. Ama limitin etkili
+ * olması ona bağlı görünüyor; bu yüzden limit yazılırken aynı kilit altında
+ * ölçülmüş tek değer (4) kuruluyor ve geri okunuyor. Bu adım önceden NixOS
+ * modülünde `acpi_call` ile, kilitsiz ve doğrulamasız yapılıyordu.
  *
  * ------------------------------------------------------------------------
  * İKİ ÖLÇÜLMÜŞ GERÇEK, İKİSİ DE BU DOSYANIN TASARIMINI BELİRLİYOR
@@ -93,6 +96,33 @@ static int aero_charge_limit_read(u32 *pct)
 	return aero_ec_read(AERO_RD_CHARGE_LIMIT, 0, pct);
 }
 
+/* Çağıran io_lock'u tutmalı. BCPS zaten 4 ise yazmıyor. */
+static int __aero_charge_mode_ensure(void)
+{
+	u32 mode = 0;
+	int ret;
+
+	ret = __aero_ec_read(AERO_RD_CHARGE_MODE, 0, &mode);
+	if (ret)
+		return ret;
+	if (mode == AERO_CHARGE_MODE_CUSTOM)
+		return 0;
+
+	ret = __aero_ec_write(AERO_WR_CHARGE_MODE, AERO_CHARGE_MODE_CUSTOM);
+	if (!ret)
+		ret = __aero_ec_read(AERO_RD_CHARGE_MODE, 0, &mode);
+	if (ret)
+		return ret;
+
+	if (mode != AERO_CHARGE_MODE_CUSTOM) {
+		pr_warn("charge mode 0x%02x was written but EC reads 0x%02x — write did not stick\n",
+			AERO_CHARGE_MODE_CUSTOM, mode);
+		return -EIO;
+	}
+
+	return 0;
+}
+
 /*
  * Yaz + geri oku + karşılaştır. Üçü tek kilit altında: WMBD'nin dönüşü
  * bilgi taşımadığı için doğrulama SADECE geri okumayla mümkün, ve araya
@@ -104,7 +134,9 @@ static int aero_charge_limit_write(u32 pct)
 	int ret;
 
 	aero_ec_lock();
-	ret = __aero_ec_write(AERO_WR_CHARGE_LIMIT, pct);
+	ret = __aero_charge_mode_ensure();
+	if (!ret)
+		ret = __aero_ec_write(AERO_WR_CHARGE_LIMIT, pct);
 	if (!ret)
 		ret = __aero_ec_read(AERO_RD_CHARGE_LIMIT, 0, &back);
 	aero_ec_unlock();

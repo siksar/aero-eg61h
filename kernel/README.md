@@ -43,14 +43,20 @@ NixOS checkout. On a conventional distribution, the equivalent command is:
 make -C /lib/modules/$(uname -r)/build M="$PWD" LLVM=1 modules
 ```
 
-The DMI gate accepts only SKU EG61VH. `force=1` bypasses the gate and is for
-controlled debugging only; selector meanings have not been validated on other
-models.
+The DMI gate accepts only SKU EG61VH. `force=1` bypasses only the DMI gate and
+is for controlled debugging only; selector meanings have not been validated on
+other models.
 
 The driver refuses to bind when a conflicting vendor platform driver is already
 loaded. This prevents two writers from racing over the same WMI methods. Remove
-the conflicting module before loading `aero_eg61h`; do not use `force=1` to run
-both in production.
+the conflicting module before loading `aero_eg61h`. The separate
+`ignore_conflict=1` parameter bypasses this check; do not use it in production.
+
+Besides the fan mode, the WMBD device exposes `dgpu_boost` (WMBD 0x4C, 0-10,
+NPCF.ACBT = value × 8 W). The EC has no read-back for it, so the node reports
+the last value the driver wrote, or `unknown`. Writing the charge limit also
+sets and verifies the measured charge mode (BCPS, WMBD 0x64 = 4) under the same
+lock.
 
 ## WMI and EC design
 

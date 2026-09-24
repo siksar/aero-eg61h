@@ -222,5 +222,6 @@ static const struct attribute_group aero_fan_group = {
 
 const struct attribute_group *aero_wmbd_groups[] = {
 	&aero_fan_group,
+	&aero_gpu_group,
 	NULL
 };

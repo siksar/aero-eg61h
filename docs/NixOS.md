@@ -56,9 +56,12 @@ journalctl -k -b | grep aero_eg61h
 systemctl status aero-power-profile aero-charge-limit aero-set-fan@balanced
 ```
 
-The module compiles and loads the kernel module, keeps `acpi_call` available for
-the measured Dynamic Boost control, installs the charge/fan/profile bridge
-services, and installs their polkit allow-list. Reboot after the first switch
+The module compiles and loads the kernel module, installs the
+charge/fan/profile bridge services, and installs their polkit allow-list. All
+EC writes, including the Dynamic Boost budget, go through the kernel driver;
+`acpi_call` is not loaded. The polkit rule applies only to the configured user
+in a local, active session; remote sessions fall back to administrator
+authentication. Reboot after the first switch
 so boot ordering is tested, rather than relying only on a manually inserted
 module.
 
